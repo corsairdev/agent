@@ -1,10 +1,10 @@
 # Corsair Agent
 
-Your developer stack, automated. Describe what you want from WhatsApp — Corsair writes TypeScript, runs it, and keeps it running forever.
+Your developer stack, automated. Trigger from WhatsApp or Telegram.
 
 Not a chatbot. A persistent automation server that watches your tools and tells you what matters, without you asking.
 
-No MCP. No CLI access. Just typed API calls — code you can read, modify, and share.
+No MCP. No CLI access. Just typed API calls the agent writes.
 
 ## What it does
 
@@ -25,87 +25,42 @@ A webhook workflow is registered. It fires on the event, runs the code, and you'
 - **Cron workflows** — run on a schedule, results delivered to WhatsApp
 - **Webhook workflows** — fire on external events (GitHub, Stripe, Linear, Slack...)
 
-## How it works
-
-```
-WhatsApp message
-  → poller picks it up
-  → agent searches code examples (semantic search)
-  → agent writes TypeScript using Corsair SDK
-  → typechecked before execution
-  → runs immediately (script) or stored + scheduled (workflow)
-  → output delivered back to WhatsApp
-```
-
-External events follow the same path in reverse:
-
-```
-Webhook arrives (GitHub star, Stripe payment, Linear issue...)
-  → matched to stored webhook workflows
-  → workflow executes
-  → result sent to WhatsApp
-```
-
-## Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Interface | WhatsApp (Baileys) |
-| Agent / LLM | Vercel AI SDK — Anthropic (default) or OpenAI |
-| Integrations | Corsair SDK (Slack, Linear, GitHub, Gmail, Drive, Calendar, Discord, Resend...) |
-| Memory | mem0 — persistent per-conversation context |
-| Database | Postgres + Drizzle ORM |
-| Scheduler | node-cron |
-| Server | Express + tRPC on port 3001 |
-
 ## Quick start
 
-Setup is handled by Claude Code. Clone the repo, open it in Claude Code, and run `/setup`. It walks through dependencies, environment variables, database setup, and WhatsApp authentication.
+Clone the repo. The setup skill handles everything else — just tell it to get started.
 
 ```bash
-git clone https://github.com/your-org/corsair-agent
-cd corsair-agent
-claude
+git clone https://github.com/corsairdev/agent.git corsair
+cd corsair
 ```
 
-Then run `/setup`.
+Point your coding agent to /setup (in Claude Code, run `/setup`)
 
-If you need an integration that isn't built in, tell Claude Code what API you want to add. It will write the plugin, add code examples to the search index, and wire it into the agent. Any API with a REST interface can become a Corsair integration.
-
-For manual setup:
-
-# 2. Copy and fill in environment variables
-cp .env.example .env
-
-# 3. Start Postgres
-pnpm db:up
-
-# 4. Run migrations + seed code examples
-pnpm db:push && pnpm seed:code
-
-# 5. Authenticate WhatsApp (scan QR code)
-pnpm whatsapp:auth
-
-# 6. Start the server
-pnpm dev
-```
-
-Set `WHATSAPP_ENABLED=true` in `.env` to activate the WhatsApp listener.
+The skill walks you through:
+1. Docker check and image build (Node 22, Postgres)
+2. Choosing an AI provider
+3. Running database migrations
+4. Authenticating WhatsApp — so you have something working immediately
+5. Plugin credentials one at a time, stored encrypted in the database
 
 ## Environment variables
 
-```bash
-# LLM — set at least one (Anthropic preferred)
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...          # fallback if Anthropic not set
+`.env` holds three things and nothing else:
 
-# Postgres
-DATABASE_URL=postgres://postgres:secret@localhost:5432/corsair
+```bash
+# AI provider — set one
+OPENAI_API_KEY=sk-proj-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Master encryption key — generated automatically during setup
+CORSAIR_KEK=
 
 # WhatsApp
-WHATSAPP_ENABLED=true
-BOT_NAME=corsair               # trigger word in group chats (@corsair)
+WHATSAPP_ENABLED=false   # set to true after running /add-whatsapp
+BOT_NAME=corsair         # trigger word in group chats (@corsair)
 ```
+
+Plugin credentials (Slack, Linear, Google, etc.) are encrypted in Postgres — never in `.env`. The `/add-keys` skills handle storing them.
 
 ## Project structure
 
