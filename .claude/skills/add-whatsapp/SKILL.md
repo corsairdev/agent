@@ -7,7 +7,7 @@ description: Set up WhatsApp for the Corsair agent. Use when the user wants to c
 
 Run all steps automatically. Pause only when the user must take a manual action (entering the pairing code in WhatsApp). Always run commands directly — never tell the user to run something you can do yourself.
 
-**Working directory:** Always run commands from the `agent/` directory. The agent runs in Docker — use `docker compose exec agent <command>` instead of running commands directly. Exception: `docker compose` commands themselves run on the host.
+The agent runs in Docker — use `docker compose exec agent <command>` instead of running commands directly. Exception: `docker compose` commands themselves run on the host.
 
 ---
 
@@ -29,7 +29,7 @@ Dependencies are pre-installed in the Docker image. No manual `pnpm install` nee
 
 ## 2. Configure environment variables
 
-Read `agent/.env`. Add these entries if not present:
+Read `.env`. Add these entries if not present:
 
 ```
 # Required: enable the WhatsApp listener

@@ -21,7 +21,7 @@ Use WebSearch or WebFetch to look up the API documentation. Find:
 
 ## Step 3: Scaffold the Plugin
 
-Run the scaffold command from the `agent/` directory:
+Run the scaffold command:
 
 ```bash
 npm run new-plugin <PluginName>

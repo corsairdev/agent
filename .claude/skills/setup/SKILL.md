@@ -7,8 +7,6 @@ description: Run initial Corsair setup. Use when a user wants to install, config
 
 Run all steps automatically. Pause only when the user must take a manual action (entering a key, making a choice). When something is broken or missing, fix it yourself. Only ask the user when you genuinely need their input.
 
-**Working directory:** Always run commands from the `agent/` directory.
-
 **Principle:** Do the exciting stuff first. Get their agent running and talking on WhatsApp before asking for any plugin keys. Each plugin key is an unlock — present them that way.
 
 ---
