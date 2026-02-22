@@ -1,5 +1,5 @@
 ---
-name: setup
+name: add-whatsapp
 description: Set up WhatsApp for the Corsair agent. Use when the user wants to connect WhatsApp, authenticate with a pairing code, configure the bot trigger, run the DB migration, or start receiving WhatsApp messages.
 ---
 
