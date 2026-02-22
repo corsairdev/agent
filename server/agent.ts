@@ -1,7 +1,7 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { openai } from '@ai-sdk/openai';
 import type { ModelMessage } from 'ai';
-import { generateText, stepCountIs, tool, zodSchema } from 'ai';
+import { generateText, stepCountIs, streamText, tool, zodSchema } from 'ai';
 import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, whatsappMessages } from './db';
@@ -404,6 +404,29 @@ function makeHistoryTool(jid: string | undefined) {
 				})),
 			};
 		},
+	});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming entry point (chat UI)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function createAgentStream(messages: ModelMessage[]) {
+	const model = getModel();
+
+	const webSearchTool = process.env.ANTHROPIC_API_KEY
+		? anthropic.tools.webSearch_20250305({})
+		: openai.tools.webSearchPreview({});
+
+	return streamText({
+		model,
+		system: SYSTEM_PROMPT,
+		messages,
+		tools: {
+			...agentTools,
+			web_search: webSearchTool,
+		},
+		stopWhen: stepCountIs(10),
 	});
 }
 
