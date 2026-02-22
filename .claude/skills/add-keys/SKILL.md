@@ -5,7 +5,33 @@ description: Explains Corsair's key management model. Read this before running a
 
 # Corsair Key Management
 
-Keys are **never stored in `.env`**. The only things that belong in `.env` are:
+## Credentials
+
+**Never ask the user to paste a credential into chat.** Instead, run `pwd` to get the absolute project path, then tell the user to write it directly into `.env` via a shell command. Always show the exact command with the env var name and a clear placeholder:
+
+```bash
+echo 'SOME_API_KEY=YOUR_KEY_HERE' >> /absolute/path/to/.env
+```
+
+When writing setup scripts, read credentials from `process.env` rather than hardcoding them. For example:
+
+```typescript
+const API_KEY = process.env.SOME_API_KEY!;
+```
+
+After the script runs and the key is stored in the DB, remove the temp lines from `.env` yourself — run a shell command to delete any lines you added. For example, to remove a line containing `SOME_API_KEY`:
+
+```bash
+sed -i '' '/^SOME_API_KEY=/d' /absolute/path/to/.env
+```
+
+Do this for every env var you asked the user to add before moving on.
+
+---
+
+## Storage
+
+Keys are **never stored in `.env`** long-term. The only things that permanently belong in `.env` are:
 - `CORSAIR_KEK` — the Key Encryption Key (master key for envelope encryption)
 - `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` — the AI provider key
 

@@ -5,6 +5,30 @@ description: Run initial Corsair setup. Use when a user wants to install, config
 
 # Corsair Setup
 
+## Credentials
+
+**Never ask the user to paste a credential into chat.** Instead, run `pwd` to get the absolute project path, then tell the user to write it directly into `.env` via a shell command. Always show the exact command with the env var name and a clear placeholder:
+
+```bash
+echo 'SOME_API_KEY=YOUR_KEY_HERE' >> /absolute/path/to/.env
+```
+
+When writing setup scripts, read credentials from `process.env` rather than hardcoding them. For example:
+
+```typescript
+const API_KEY = process.env.SOME_API_KEY!;
+```
+
+After the script runs and the key is stored in the DB, remove the temp lines from `.env` yourself — run a shell command to delete any lines you added. For example, to remove a line containing `SOME_API_KEY`:
+
+```bash
+sed -i '' '/^SOME_API_KEY=/d' /absolute/path/to/.env
+```
+
+Do this for every env var you asked the user to add before moving on.
+
+---
+
 Run all steps automatically. Pause only when the user must take a manual action (entering a key, making a choice). When something is broken or missing, fix it yourself. Only ask the user when you genuinely need their input.
 
 **Principle:** Do the exciting stuff first. Get their agent running and talking on WhatsApp before asking for any plugin keys. Each plugin key is an unlock — present them that way.
@@ -53,12 +77,7 @@ Ask the user:
 
 > "Which AI provider do you want to use? **OpenAI** (GPT) or **Anthropic** (Claude)?"
 
-- **OpenAI:** Direct them to https://platform.openai.com/api-keys. Ask them to paste their key. Add `OPENAI_API_KEY=<key>` to `.env`.
-- **Anthropic:** Direct them to https://console.anthropic.com/settings/keys. Ask them to paste their key. Add `ANTHROPIC_API_KEY=<key>` to `.env`.
-
-Tell the user: "Your key is stored only in `.env` on your machine."
-
-Then update `server/agent.ts` (or wherever the AI model is configured) to use the provider they chose if it isn't already set.
+Direct the user to get their key (OpenAI: https://platform.openai.com/api-keys, Anthropic: https://console.anthropic.com/settings/keys). Give them the exact `echo '...' >> .env` command following the **Credentials** convention above. Then update `server/agent.ts` to use the chosen provider if it isn't already set.
 
 ### 1e. Install host dependencies (for IDE support only)
 
