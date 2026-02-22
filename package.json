@@ -1,0 +1,57 @@
+{
+  "name": "corsair-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "start": "tsx server/index.ts",
+    "whatsapp:auth": "tsx server/whatsapp/auth.ts",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "script": "tsx server/script.ts",
+    "seed:code": "tsx server/seed/index.ts",
+    "new-plugin": "tsx scripts/new-plugin.ts",
+    "format": "biome format . --write",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --fix --unsafe",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "3.0.44",
+    "@ai-sdk/openai": "3.0.29",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "ai": "6.0.89",
+    "@trpc/server": "^11.10.0",
+    "chokidar": "^4.0.3",
+    "corsair": "0.1.10",
+    "dotenv": "^16.4.0",
+    "drizzle-orm": "^0.44.5",
+    "express": "^4.21.0",
+    "mem0ai": "^2.2.3",
+    "node-cron": "^4.2.1",
+    "pg": "^8.13.0",
+    "pino": "^9.6.0",
+    "tsx": "^4.19.0",
+    "zod": "^3.25.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "sqlite3"
+    ]
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.5",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "drizzle-kit": "^0.31.8",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.4"
+  }
+}

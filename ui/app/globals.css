@@ -1,0 +1,151 @@
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+:root {
+	--bg: #0f0f0f;
+	--surface: #1a1a1a;
+	--border: #2a2a2a;
+	--text: #e8e8e8;
+	--muted: #888;
+	--accent: #3b82f6;
+	--accent-hover: #2563eb;
+	--danger: #ef4444;
+	--success: #22c55e;
+	--warn: #f59e0b;
+	--radius: 6px;
+	--font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--font);
+	font-size: 14px;
+	line-height: 1.5;
+	min-height: 100vh;
+}
+
+a {
+	color: var(--accent);
+	text-decoration: none;
+}
+a:hover {
+	text-decoration: underline;
+}
+
+code,
+pre {
+	font-family: "SF Mono", "Fira Code", monospace;
+	font-size: 12px;
+}
+
+pre {
+	background: #111;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 12px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+button {
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 13px;
+	border: none;
+	border-radius: var(--radius);
+	padding: 6px 14px;
+	transition: opacity 0.15s;
+}
+button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+button:hover:not(:disabled) {
+	opacity: 0.85;
+}
+
+.btn-primary {
+	background: var(--accent);
+	color: #fff;
+}
+.btn-danger {
+	background: var(--danger);
+	color: #fff;
+}
+.btn-ghost {
+	background: var(--surface);
+	color: var(--text);
+	border: 1px solid var(--border);
+}
+
+input,
+select,
+textarea {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	color: var(--text);
+	font-family: inherit;
+	font-size: 13px;
+	padding: 7px 10px;
+	width: 100%;
+	outline: none;
+}
+input:focus,
+select:focus,
+textarea:focus {
+	border-color: var(--accent);
+}
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+}
+th,
+td {
+	padding: 10px 12px;
+	text-align: left;
+	border-bottom: 1px solid var(--border);
+}
+th {
+	color: var(--muted);
+	font-weight: 500;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+tr:last-child td {
+	border-bottom: none;
+}
+
+.badge {
+	display: inline-block;
+	padding: 2px 8px;
+	border-radius: 99px;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+}
+.badge-green {
+	background: #14532d;
+	color: var(--success);
+}
+.badge-yellow {
+	background: #713f12;
+	color: var(--warn);
+}
+.badge-red {
+	background: #7f1d1d;
+	color: var(--danger);
+}
+.badge-blue {
+	background: #1e3a8a;
+	color: #93c5fd;
+}
