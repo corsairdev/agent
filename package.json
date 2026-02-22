@@ -20,7 +20,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check . --fix --unsafe",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "available-plugins": "tsx scripts/available-plugins.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "3.0.44",
@@ -29,7 +30,7 @@
     "ai": "6.0.89",
     "@trpc/server": "^11.10.0",
     "chokidar": "^4.0.3",
-    "corsair": "0.1.10",
+    "corsair": "0.1.11",
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.44.5",
     "express": "^4.21.0",

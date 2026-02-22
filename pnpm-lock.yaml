@@ -27,8 +27,8 @@ importers:
         specifier: ^4.0.3
         version: 4.0.3
       corsair:
-        specifier: 0.1.10
-        version: 0.1.10
+        specifier: 0.1.11
+        version: 0.1.11
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
@@ -1554,8 +1554,8 @@ packages:
     resolution: {integrity: sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==}
     engines: {node: '>= 0.6'}
 
-  corsair@0.1.10:
-    resolution: {integrity: sha512-zc3Q1v/yD1i3mImwsBuMvVdHXWU2MR3/u/lC72oiUhgHxbrBKlNmIdH83cOmuHZt6w3p9pfgHN/yBmQh+0rzVg==}
+  corsair@0.1.11:
+    resolution: {integrity: sha512-kNv2QrJWgBns15iFdxQgoiZo71Z/jFzKlGavscfRSJ9romJNd4ljeoHRD2VcSfT0z1nD7lXXcGttEc+XPByaig==}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -4496,7 +4496,7 @@ snapshots:
 
   cookie@0.7.2: {}
 
-  corsair@0.1.10:
+  corsair@0.1.11:
     dependencies:
       kysely: 0.28.11
       uuid: 13.0.0

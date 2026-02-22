@@ -192,7 +192,7 @@ import { pool } from './db';
 export const corsair = createCorsair({
   plugins: [slack(), linear(), resend(), googlecalendar(), stripe({ key: process.env.STRIPE_API_KEY! })], // add plugin here
   database: pool,
-  kek: process.env.CORSAIR_MASTER_KEY!,
+  kek: process.env.CORSAIR_KEK!,
   multiTenancy: false,
 });
 ```
