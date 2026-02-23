@@ -7,25 +7,22 @@ description: Explains Corsair's key management model. Read this before running a
 
 ## Credentials
 
-**Never ask the user to paste a credential into chat.** Instead, run `pwd` to get the absolute project path, then tell the user to write it directly into `.env` via a shell command. Always show the exact command with the env var name and a clear placeholder:
+**Never ask the user to paste a credential into chat.** Instead:
 
-```bash
-echo 'SOME_API_KEY=YOUR_KEY_HERE' >> /absolute/path/to/.env
-```
-
-When writing setup scripts, read credentials from `process.env` rather than hardcoding them. For example:
-
-```typescript
-const API_KEY = process.env.SOME_API_KEY!;
-```
-
-After the script runs and the key is stored in the DB, remove the temp lines from `.env` yourself — run a shell command to delete any lines you added. For example, to remove a line containing `SOME_API_KEY`:
-
-```bash
-sed -i '' '/^SOME_API_KEY=/d' /absolute/path/to/.env
-```
-
-Do this for every env var you asked the user to add before moving on.
+1. Run `pwd` to get the absolute project path — call it `$DIR`.
+2. Tell the user to run this command, with a clear placeholder showing exactly what to replace:
+   ```bash
+   echo 'SOME_API_KEY=YOUR_KEY_HERE' >> $DIR/.env
+   ```
+3. In any setup script you write, read the value from `process.env` — never hardcode it:
+   ```typescript
+   const API_KEY = process.env.SOME_API_KEY!;
+   ```
+4. After the script runs successfully, delete each temp line from `.env` yourself. The `sed` command **must always include the absolute path to the file** — never run it without it:
+   ```bash
+   sed -i '' '/^SOME_API_KEY=/d' $DIR/.env
+   ```
+   Run one `sed` command per env var you added.
 
 ---
 

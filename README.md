@@ -1,8 +1,8 @@
 # Corsair Agent
 
-Your developer stack, automated. Trigger from WhatsApp or Telegram.
+Your developer stack, automated. Trigger from WhatsApp or Telegram (or vibe code a light, local UI around it).
 
-Not a chatbot. A persistent automation server that watches your tools and tells you what matters, without you asking.
+A persistent automation server that watches your tools and tells you what matters.
 
 No MCP. No CLI access. Just typed API calls the agent writes.
 

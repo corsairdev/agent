@@ -5,8 +5,6 @@ services:
       POSTGRES_DB: corsair
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: secret
-    ports:
-      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -36,7 +34,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: pnpm dev
+    command: sh -c "pnpm db:push && tsx server/index.ts"
 
 volumes:
   pgdata:

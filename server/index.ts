@@ -364,7 +364,7 @@ async function main() {
 	});
 
 	// ─────────────────────────────────────────────────────────────────────────
-	const PORT = Number(process.env.PORT ?? 3001);
+	const PORT = Number(process.env.PORT ?? 3000);
 	app.listen(PORT, () => {
 		console.log(`[server] Listening on http://localhost:${PORT}`);
 		console.log(

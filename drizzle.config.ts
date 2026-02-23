@@ -9,8 +9,6 @@ export default {
 	out: './drizzle',
 	dialect: 'postgresql',
 	dbCredentials: {
-		url:
-			process.env.DATABASE_URL ??
-			'postgres://postgres:secret@localhost:5433/corsair',
+		url: process.env.DATABASE_URL!,
 	},
 } satisfies Config;

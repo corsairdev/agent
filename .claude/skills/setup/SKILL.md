@@ -7,25 +7,22 @@ description: Run initial Corsair setup. Use when a user wants to install, config
 
 ## Credentials
 
-**Never ask the user to paste a credential into chat.** Instead, run `pwd` to get the absolute project path, then tell the user to write it directly into `.env` via a shell command. Always show the exact command with the env var name and a clear placeholder:
+**Never ask the user to paste a credential into chat.** Instead:
 
-```bash
-echo 'SOME_API_KEY=YOUR_KEY_HERE' >> /absolute/path/to/.env
-```
-
-When writing setup scripts, read credentials from `process.env` rather than hardcoding them. For example:
-
-```typescript
-const API_KEY = process.env.SOME_API_KEY!;
-```
-
-After the script runs and the key is stored in the DB, remove the temp lines from `.env` yourself — run a shell command to delete any lines you added. For example, to remove a line containing `SOME_API_KEY`:
-
-```bash
-sed -i '' '/^SOME_API_KEY=/d' /absolute/path/to/.env
-```
-
-Do this for every env var you asked the user to add before moving on.
+1. Run `pwd` to get the absolute project path — call it `$DIR`.
+2. Tell the user to run this command, with a clear placeholder showing exactly what to replace:
+   ```bash
+   echo 'SOME_API_KEY=YOUR_KEY_HERE' >> $DIR/.env
+   ```
+3. In any setup script you write, read the value from `process.env` — never hardcode it:
+   ```typescript
+   const API_KEY = process.env.SOME_API_KEY!;
+   ```
+4. After the script runs successfully, delete each temp line from `.env` yourself. The `sed` command **must always include the absolute path to the file** — never run it without it:
+   ```bash
+   sed -i '' '/^SOME_API_KEY=/d' $DIR/.env
+   ```
+   Run one `sed` command per env var you added.
 
 ---
 
@@ -97,6 +94,8 @@ docker compose up --build -d
 
 This builds the agent image (Node 22 with all dependencies pre-installed) and starts both Postgres and the agent server. The first build takes a couple of minutes. Subsequent starts are instant since Docker caches the dependency layer.
 
+Database migrations run automatically at container startup before the server starts — no manual migration step needed.
+
 The agent mounts the source code from the host, so file edits are reflected immediately — `tsx` hot-reloads inside the container. `node_modules` is managed entirely by the container; the host version is never used at runtime.
 
 If Docker isn't running, start it and wait for it to be ready:
@@ -113,13 +112,15 @@ To follow the agent logs:
 docker compose logs -f agent
 ```
 
-### 1g. Run database migrations
+### 1g. Seed code context
+
+Once the containers are up and healthy, run:
 
 ```bash
-docker compose exec agent pnpm db:push
+docker compose exec agent pnpm run seed:code
 ```
 
-Runs migrations inside the container against the internal Postgres service. If the agent container isn't up yet, wait a moment and retry.
+This seeds the agent's code context into the database so it can reason about its own codebase. Wait for it to complete before moving on.
 
 ---
 
@@ -220,11 +221,13 @@ Congratulate them — their agent is live.
 **Useful commands to share with the user:**
 ```bash
 docker compose logs -f agent        # follow live logs
-docker compose restart agent        # restart after config changes
+docker compose up -d agent          # restart and pick up .env changes
 docker compose down                 # stop everything
 docker compose up -d                # start everything again
 docker compose up --build -d        # rebuild after package.json changes
 ```
+
+> **Note:** Use `docker compose up -d agent` (not `restart`) whenever `.env` changes — `restart` preserves the old environment from container creation.
 
 ---
 
@@ -232,12 +235,10 @@ docker compose up --build -d        # rebuild after package.json changes
 
 **`docker compose up --build` fails during image build:** Usually a network issue or missing build tools. Check Docker is running. If it fails on `pnpm install` inside the container, check `Dockerfile.dev` — the `apt-get` step installs build tools needed by baileys.
 
-**`docker compose exec agent pnpm db:push` fails:** Check the agent container is running (`docker compose ps`). Check Postgres is healthy (`docker compose logs postgres`).
-
 **Agent crashes on startup:** Run `docker compose logs agent`. Common causes:
 - Missing `CORSAIR_KEK` in `.env`
 - Missing AI provider key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
-- Postgres not yet healthy when agent started (it will retry, give it a moment)
+- Migration failure — check logs for `db:push` errors; usually means Postgres isn't healthy yet. Run `docker compose logs postgres` to diagnose, then `docker compose up -d` to retry.
 
 **Plugin throws key error:** Make sure the plugin's env var is in `.env` and is being passed to the plugin function in `server/corsair.ts`. Then `docker compose restart agent`.
 

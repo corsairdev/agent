@@ -46,13 +46,13 @@ Ask the user what trigger word they want if they have a preference. Default is `
 
 ## 3. Run the database migration
 
+Migrations run automatically when the container starts. If tables are missing, trigger a restart:
+
 ```bash
-docker compose exec agent pnpm db:push
+docker compose up -d agent
 ```
 
-This creates the `whatsapp_messages`, `whatsapp_chats`, and `whatsapp_sessions` tables.
-
-**If it fails:** Check that Postgres is running (`docker compose ps`) and the agent container is up.
+Then verify with `docker compose logs agent` — look for the `db:push` output before the server starts.
 
 ---
 
@@ -154,8 +154,10 @@ wait $AUTH_PID 2>/dev/null || true
 ## 5. Restart the server
 
 ```bash
-docker compose restart agent
+docker compose up -d agent
 ```
+
+This recreates the container so it picks up the new `WHATSAPP_ENABLED` value from `.env`. (Plain `docker compose restart` preserves the old environment and won't work here.)
 
 Then follow the logs:
 
