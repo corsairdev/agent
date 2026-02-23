@@ -4,7 +4,7 @@ import type { ModelMessage } from 'ai';
 import { generateText, stepCountIs, streamText, tool, zodSchema } from 'ai';
 import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, whatsappMessages } from './db';
+import { db, permissions, whatsappMessages } from './db';
 import {
 	archiveWorkflow,
 	executeScript,
@@ -48,6 +48,8 @@ export type AgentOutput =
 			pendingMessages: ModelMessage[];
 			toolCallId: string;
 			toolName: string;
+			/** Set when ask_human was triggered by a permission request */
+			permissionId?: string;
 	  }
 	| {
 			type: 'message';
@@ -65,20 +67,45 @@ You are a personal automation assistant that helps users build automations with 
 ## Tools
 
 - **ask_human**: Pause and wait for a reply. REQUIRED when you need user input — never ask in plain text.
+- **request_permission**: Request approval for a protected endpoint. Call this when a script logs a \`[PERMISSION_REQUIRED]\` message. Pass the exact endpoint and args from the log, plus a friendly description. The user will review and approve or decline on a dedicated page.
 - **search_code_examples**: Find Corsair API patterns. Call before writing code.
-- **write_and_execute_code**: Write TypeScript, typecheck, and run (scripts) or validate (workflows).
+- **write_and_execute_code**: Write TypeScript, typecheck, and run (scripts) or validate (workflows). Use this not just to act, but to explore and confirm — it is your window into the outside world.
 - **manage_workflows**: List, create, update, or archive workflows. After successfully writing a workflow with \`write_and_execute_code\`, call \`manage_workflows\` with \`action: "create"\` and the same workflowId, code, description, cronSchedule/webhookTrigger to store it so it runs on future triggers.
 - **get_conversation_history** *(WhatsApp only)*: Fetch past messages from the current chat. Call this when you need more context about a previous request, an earlier decision, or anything the user may have mentioned before. Pick a \`limit\` that is just enough — start small (e.g. 5) and call again with a larger number if still unclear.
 
 ## Execution model
 
-- Batch independent actions in one script. Use a REPL pattern (fetch → read → act) when steps depend on each other.
-- Don't guess IDs or names — fetch first, then act.
-- Use \`console.log\` to surface data you need for later steps.
+Treat \`write_and_execute_code\` as a REPL: a tool for both understanding the world and acting on it. For any task that touches real data, explore before you commit.
+
+**For multi-step one-off scripts:**
+Break the job into sequential phases. Each phase is its own \`write_and_execute_code\` call:
+1. **Research phase** — fetch the data you need and \`console.log\` exactly what you'll use downstream: IDs, names, counts, content, addresses. Read the output before moving on.
+2. **Action phase** — use the confirmed values from the research output to execute the action. If that action produces a result that drives the next step, log it and handle it in a third call.
+
+Never collapse dependent steps into one script if the second step relies on reading the first step's output. For example, if a user asks to pull open tasks from a project and send a summary to a person, first fetch and log the tasks and the person's contact details. Then, using that confirmed data, compose and send the message.
+
+**For workflows and cron jobs:**
+You cannot interactively inspect output at runtime, so do your research upfront before writing the workflow:
+1. Run a **one-off research script** first. Fetch and log every identifier you'll need — exact resource names, IDs, addresses, list names, project keys, etc. Confirm they exist.
+2. Write the workflow using only the confirmed exact identifiers from step 1. Never hardcode a name or ID you haven't verified with a live API call.
+
+For example, if a user wants a weekly digest sent to a mailing list, run a script first to list all mailing lists and log their exact names. Find the right one, then write the workflow using that confirmed name.
+
+## Deduction and fuzzy matching
+
+Never give up on a resource because an exact string match failed. Users describe things loosely — with different spacing, casing, punctuation, or shorthand. Before concluding something doesn't exist:
+1. Fetch the full list of available resources of that type.
+2. \`console.log\` the full list so you can read it.
+3. Look for a close match: collapsed spaces, hyphens vs spaces, different capitalisation, common abbreviations, partial name matches.
+4. If you find a clear match, proceed with the correct identifier — do not ask the user.
+
+For example, if a user says to email "the design team" and no contact group by that exact name exists, fetch all contact groups and look for anything resembling "design" — it might be "Design Team", "design-team", or "designers". If it's obvious, use it.
+
+Only escalate to \`ask_human\` after you have fetched and inspected the available options and genuinely cannot determine which one the user meant. When you do ask, include the fetched list so the user can pick.
 
 ## When to ask vs assume
 
-Ask when the target is unspecified and critical (which channel, recipient). Assume when the value is singular or inferable. Don't ask when the user already specified it or you can resolve it in code.
+Ask when the target is unspecified and critical (e.g. which account to send from when there are multiple). Assume when the value is singular or clearly inferable. Don't ask when the user already specified it or you can resolve it with a live lookup.
 
 ## Handling failures
 
@@ -87,9 +114,7 @@ When code fails, **do not send the failing code or raw error to the user**. Inst
 2. Analyse the error and any output snippet to understand what went wrong.
 3. Fix the issue and retry.
 
-If the failure is a missing resource (channel, user, project, etc.): fetch the full list of available resources and look for a close match — the user may have used slightly different casing, spacing, or omitted punctuation. If you find a clear match, retry with the correct identifier.
-
-Only ask the user (via \`ask_human\`) or report failure after you have investigated and cannot resolve it yourself. Don't make broad assumptions — if in doubt or no clear match exists, ask.
+If the failure is a missing resource: apply the deduction process above — fetch the full list, look for a close match, and retry with the correct identifier. Only report failure or ask after you have exhausted this.
 
 Always use \`ask_human\` — never ask in plain text. Include fetched options so the user can pick.
 
@@ -107,9 +132,39 @@ Code examples from search are for patterns — don't reuse example IDs or names.
 
 Use the \`ai\` package (\`generateText\`) with \`process.env.ANTHROPIC_API_KEY\` → anthropic, else openai.
 
+## Handling protected endpoints
+
+Some endpoints are protected and require explicit user approval before execution. When you run a script that calls a protected endpoint, the output will include a line like:
+
+\`[PERMISSION_REQUIRED] endpoint=slack.messages.post args={"channel":"general","text":"Hello"} | This endpoint requires approval.\`
+
+When you see this:
+1. Parse the endpoint name and the args JSON from the message.
+2. Call \`request_permission\` with the endpoint, args, and a friendly description.
+3. The tool returns an approval URL. Call \`ask_human\` with a message like: "I need your permission to [description]. Please review and approve here: [URL]"
+4. When the user approves, you will resume. Re-run the same script — the endpoint will now succeed.
+5. If the user declines, do NOT retry. Inform the user that the action was cancelled.
+
+Never bypass or skip the permission step. Never call the endpoint a second time without first getting approval via \`request_permission\`.
+
 ## Always reply to the user
 
 After completing any task — running a script, creating a workflow, answering a question — always send a short, friendly message back. Confirm what happened, share a key detail or result if relevant, and keep it to 1–3 sentences. Never finish silently.`;
+
+export const WORKFLOW_FAILURE_PROMPT = `
+## Workflow failure escalation
+
+You have been invoked because a workflow failed. You will receive the workflow ID, code, error, trigger type (cron or webhook), and — for webhook failures — the event payload that triggered the run.
+
+Your job is to act autonomously without asking the user:
+1. **Diagnose** — read the code and the error carefully to understand the root cause. Do not skim; the fix depends on the exact cause.
+2. **Fix the missed run** — write and execute a one-off script that performs what the workflow was supposed to do for this specific failed invocation. For webhook failures, use the event payload to reconstruct what should have happened. Do not skip this step — the missed action needs to be completed.
+3. **Fix and update the workflow** — correct the underlying issue in the code, then call \`manage_workflows\` with \`action: "update"\` to persist the fixed version so the same failure does not recur.
+
+Apply the same research discipline as for any other task: if the failure is caused by a wrong identifier, unknown resource, or changed API shape, fetch the current state of those resources before writing the fix.
+
+Only use \`ask_human\` if you have diagnosed the failure and genuinely cannot determine the correct fix without more information from the user.
+`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -138,15 +193,16 @@ function getWorkflowFunctionName(code: string): string | null {
 
 const agentTools = {
 	search_code_examples: tool({
-		description: 'Search Corsair API code examples by query.',
+		description:
+			'Search Corsair API code examples by plugin name or keyword. Pass a plugin name (e.g. "slack", "github", "linear") or a keyword (e.g. "channels", "messages", "issues").',
 		inputSchema: zodSchema(z.object({ query: z.string() })),
-		execute: async ({ query }) => {
-			const examples = await searchCodeExamples(query, 5);
+		execute: ({ query }) => {
+			const examples = searchCodeExamples(query, 5);
 			return {
 				examples: examples.map((ex) => ({
+					plugin: ex.plugin,
 					description: ex.description,
 					code: ex.code,
-					similarity: ex.similarity,
 				})),
 			};
 		},
@@ -351,6 +407,56 @@ const agentTools = {
 			'Ask the user one clarifying question. Pauses the session until the user replies. Include any fetched options.',
 		inputSchema: zodSchema(z.object({ question: z.string() })),
 	}),
+
+	request_permission: tool({
+		description:
+			'Request permission from the user to execute a protected endpoint. Call this when a script returns a [PERMISSION_REQUIRED] message. Returns an approval URL. After calling this, call ask_human with the approval URL so the user can review and approve.',
+		inputSchema: zodSchema(
+			z.object({
+				endpoint: z
+					.string()
+					.describe(
+						'Full endpoint path from the PERMISSION_REQUIRED message, e.g. "slack.messages.post"',
+					),
+				args: z
+					.record(z.unknown())
+					.describe(
+						'The arguments object from the PERMISSION_REQUIRED message',
+					),
+				description: z
+					.string()
+					.describe(
+						'Short human-readable summary of what this action will do, e.g. "Post a message to #general in Slack"',
+					),
+			}),
+		),
+		execute: async ({ endpoint, args, description }) => {
+			const [plugin, ...rest] = endpoint.split('.');
+			const operation = rest.join('.');
+
+			const [perm] = await db
+				.insert(permissions)
+				.values({
+					endpoint,
+					plugin: plugin!,
+					operation,
+					args,
+					description,
+					status: 'pending',
+				})
+				.returning({ id: permissions.id });
+
+			const baseUrl =
+				process.env.NEXT_PUBLIC_UI_URL ?? 'http://localhost:3000';
+			const approvalUrl = `${baseUrl}/permissions/${perm!.id}`;
+
+			return {
+				permissionId: perm!.id,
+				approvalUrl,
+				message: `Permission request created. Ask the user to approve at: ${approvalUrl}`,
+			};
+		},
+	}),
 };
 
 /** Exported for unit tests. */
@@ -436,7 +542,7 @@ export function createAgentStream(messages: ModelMessage[]) {
 
 export async function runAgent(
 	messages: ModelMessage[],
-	context?: { jid?: string },
+	context?: { jid?: string; systemExtra?: string },
 ): Promise<AgentOutput> {
 	const model = getModel();
 
@@ -444,9 +550,13 @@ export async function runAgent(
 		? anthropic.tools.webSearch_20250305({})
 		: openai.tools.webSearchPreview({});
 
+	const system = context?.systemExtra
+		? SYSTEM_PROMPT + '\n' + context.systemExtra
+		: SYSTEM_PROMPT;
+
 	const result = await generateText({
 		model,
-		system: SYSTEM_PROMPT,
+		system,
 		messages,
 		tools: {
 			...agentTools,
@@ -462,12 +572,27 @@ export async function runAgent(
 			(tc) => tc.toolName === 'ask_human',
 		);
 		if (askCall) {
+			// Check if ask_human was preceded by a request_permission call
+			const allResults = result.steps.flatMap(
+				(s) => s.staticToolResults,
+			);
+			const permResult = allResults
+				.slice()
+				.reverse()
+				.find(
+					(r: { toolName: string }) =>
+						r.toolName === 'request_permission',
+				) as { output: Record<string, unknown> } | undefined;
+
 			return {
 				type: 'needs_input',
 				question: askCall.input.question,
 				pendingMessages: [...messages, ...result.response.messages],
 				toolCallId: askCall.toolCallId,
 				toolName: askCall.toolName,
+				permissionId: permResult?.output?.permissionId as
+					| string
+					| undefined,
 			};
 		}
 	}

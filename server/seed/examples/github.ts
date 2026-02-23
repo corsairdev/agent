@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const githubExamples: CodeExample[] = [
+export const githubExamples: BaseCodeExample[] = [
 	{
 		description:
 			'List all GitHub repositories accessible to the authenticated user or organization. Logs repository names, visibility, and default branches. Use this to discover available repos before creating issues or pull requests.',

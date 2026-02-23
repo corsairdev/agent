@@ -3,6 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { trpc } from '../lib/trpc';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
 const TOOL_LABELS: Record<string, string> = {
 	write_and_execute_code: 'Writing & running code',
 	search_code_examples: 'Searching examples',
@@ -10,107 +14,230 @@ const TOOL_LABELS: Record<string, string> = {
 	web_search: 'Searching the web',
 	ask_human: 'Waiting for input',
 	get_conversation_history: 'Reading history',
+	request_permission: 'Requesting permission',
 };
 
 type ToolCall = { toolCallId: string; toolName: string; done: boolean };
 
-type Message =
-	| { role: 'user'; text: string }
-	| { role: 'assistant'; text: string; toolCalls: ToolCall[] };
+type DbMessage = {
+	id: string;
+	role: 'user' | 'assistant';
+	text: string;
+	toolCalls: ToolCall[] | null;
+	hasPending: string | null;
+	createdAt: Date;
+};
 
-// The shape we send to the tRPC subscription (matches UIMessage without id)
-type OutboundMessage = { role: 'user' | 'assistant'; parts: { type: 'text'; text: string }[] };
+type Thread = {
+	id: string;
+	title: string | null;
+	source: string;
+	createdAt: Date;
+	updatedAt: Date;
+};
 
-function toOutbound(msgs: Message[]): OutboundMessage[] {
-	return msgs.map((m) => ({
-		role: m.role,
-		parts: [{ type: 'text' as const, text: m.text }],
-	}));
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Main page
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-	const [messages, setMessages] = useState<Message[]>([]);
+	const [threads, setThreads] = useState<Thread[]>([]);
+	const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+	const [dbMessages, setDbMessages] = useState<DbMessage[]>([]);
 	const [input, setInput] = useState('');
-	// pendingMessages is set when the user submits; drives the subscription
-	const [pendingMessages, setPendingMessages] = useState<OutboundMessage[] | null>(null);
+
+	// Streaming state
+	const [isStreaming, setIsStreaming] = useState(false);
 	const [streamingText, setStreamingText] = useState('');
 	const [streamingTools, setStreamingTools] = useState<ToolCall[]>([]);
+	const [pendingPermissionId, setPendingPermissionId] = useState<string | null>(
+		null,
+	);
+
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-	const isStreaming = pendingMessages !== null;
-
-	// Auto-scroll on new content
-	useEffect(() => {
-		bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-	}, [messages, streamingText, streamingTools]);
-
-	// Start/restart the tRPC subscription whenever pendingMessages changes
-	useEffect(() => {
-		if (!pendingMessages) return;
-
-		setStreamingText('');
-		setStreamingTools([]);
-
-		const sub = trpc.chat.subscribe(
-			{ messages: pendingMessages },
-			{
-				onData(chunk) {
-					if (chunk.type === 'text-delta') {
-						setStreamingText((prev) => prev + chunk.delta);
-					} else if (chunk.type === 'tool-call') {
-						setStreamingTools((prev) => [
-							...prev,
-							{ toolCallId: chunk.toolCallId, toolName: chunk.toolName, done: false },
-						]);
-					} else if (chunk.type === 'tool-result') {
-						setStreamingTools((prev) =>
-							prev.map((t) =>
-								t.toolCallId === chunk.toolCallId ? { ...t, done: true } : t,
-							),
-						);
-					} else if (chunk.type === 'finish') {
-						setMessages((prev) => {
-							const finalText = streamingTextRef.current;
-							const finalTools = streamingToolsRef.current;
-							return [
-								...prev,
-								{ role: 'assistant', text: finalText, toolCalls: finalTools },
-							];
-						});
-						setStreamingText('');
-						setStreamingTools([]);
-						setPendingMessages(null);
-					}
-				},
-				onError(err) {
-					console.error('[chat] subscription error:', err);
-					setPendingMessages(null);
-				},
-			},
-		);
-
-		return () => sub.unsubscribe();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [pendingMessages]);
-
-	// Keep refs in sync so the finish handler can read the latest streaming state
 	const streamingTextRef = useRef('');
 	const streamingToolsRef = useRef<ToolCall[]>([]);
-	useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
-	useEffect(() => { streamingToolsRef.current = streamingTools; }, [streamingTools]);
+	const pendingPermIdRef = useRef<string | null>(null);
+
+	// Keep refs in sync
+	useEffect(() => {
+		streamingTextRef.current = streamingText;
+	}, [streamingText]);
+
+	// Auto-scroll
+	useEffect(() => {
+		bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+	}, [dbMessages, streamingText, streamingTools]);
+
+	// Poll permission status so the UI refreshes when the user approves/declines
+	useEffect(() => {
+		if (!pendingPermissionId || isStreaming) return;
+
+		const interval = setInterval(async () => {
+			try {
+				const res = await fetch(`/api/permissions/${pendingPermissionId}`);
+				if (!res.ok) return;
+				const perm = await res.json();
+				if (perm.status !== 'pending') {
+					setPendingPermissionId(null);
+					pendingPermIdRef.current = null;
+					if (activeThreadId) loadMessages(activeThreadId);
+				}
+			} catch {}
+		}, 3000);
+
+		return () => clearInterval(interval);
+	}, [pendingPermissionId, isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Load thread list on mount
+	useEffect(() => {
+		loadThreads();
+	}, []);
+
+	// Load messages when active thread changes
+	useEffect(() => {
+		if (!activeThreadId) {
+			setDbMessages([]);
+			return;
+		}
+		loadMessages(activeThreadId);
+	}, [activeThreadId]);
+
+	async function loadThreads() {
+		try {
+			const result = await trpc.threads.list.query();
+			// @ts-expect-error string vs date mismatch causing error
+			setThreads(result as Thread[]);
+		} catch (err) {
+			console.error('[threads] Failed to load threads:', err);
+		}
+	}
+
+	async function loadMessages(threadId: string) {
+		try {
+			const result = await trpc.threads.messages.query({ threadId });
+			// @ts-expect-error string vs date mismatch causing error
+			setDbMessages(result as DbMessage[]);
+		} catch (err) {
+			console.error('[threads] Failed to load messages:', err);
+		}
+	}
+
+	async function createNewThread() {
+		const { threadId } = await trpc.threads.create.mutate();
+		const newThread: Thread = {
+			id: threadId,
+			title: null,
+			source: 'web',
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		};
+		setThreads((prev) => [newThread, ...prev]);
+		setActiveThreadId(threadId);
+		setDbMessages([]);
+		setInput('');
+	}
 
 	function onSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		const trimmed = input.trim();
 		if (!trimmed || isStreaming) return;
 
-		const userMsg: Message = { role: 'user', text: trimmed };
-		const next = [...messages, userMsg];
-		setMessages(next);
 		setInput('');
 		if (textareaRef.current) textareaRef.current.style.height = 'auto';
-		setPendingMessages(toOutbound(next));
+
+		// Optimistically add user message to view
+		const optimisticUserMsg: DbMessage = {
+			id: `optimistic-${Date.now()}`,
+			role: 'user',
+			text: trimmed,
+			toolCalls: null,
+			hasPending: null,
+			createdAt: new Date(),
+		};
+		setDbMessages((prev) => [...prev, optimisticUserMsg]);
+
+		setIsStreaming(true);
+		setStreamingText('');
+		setStreamingTools([]);
+		setPendingPermissionId(null);
+		pendingPermIdRef.current = null;
+		streamingToolsRef.current = [];
+
+		const threadId = activeThreadId ?? undefined;
+
+		const sub = trpc.chat.subscribe(
+			{ threadId, message: trimmed },
+			{
+				onData(chunk) {
+					if (chunk.type === 'thread-id') {
+						const tid = chunk.threadId;
+						setActiveThreadId(tid);
+						// If this was a new thread, update threads list
+						setThreads((prev) => {
+							const exists = prev.find((t) => t.id === tid);
+							if (!exists) {
+								const newT: Thread = {
+									id: tid,
+									title: trimmed.slice(0, 60),
+									source: 'web',
+									createdAt: new Date(),
+									updatedAt: new Date(),
+								};
+								return [newT, ...prev];
+							}
+							return prev;
+						});
+					} else if (chunk.type === 'text-delta') {
+						setStreamingText((prev) => prev + chunk.delta);
+					} else if (chunk.type === 'tool-call') {
+						setStreamingTools((prev) => [
+							...prev,
+							{
+								toolCallId: chunk.toolCallId,
+								toolName: chunk.toolName,
+								done: false,
+							},
+						]);
+					} else if (chunk.type === 'tool-result') {
+						const updated = streamingToolsRef.current.map((t) =>
+							t.toolCallId === chunk.toolCallId ? { ...t, done: true } : t,
+						);
+						streamingToolsRef.current = updated;
+						setStreamingTools(updated);
+					} else if (chunk.type === 'needs-input') {
+						pendingPermIdRef.current = chunk.permissionId ?? null;
+						setPendingPermissionId(chunk.permissionId ?? null);
+					} else if (chunk.type === 'finish') {
+						const finalText = streamingTextRef.current;
+						const finalTools = streamingToolsRef.current;
+						const assistantMsg: DbMessage = {
+							id: `streaming-${Date.now()}`,
+							role: 'assistant',
+							text: finalText,
+							toolCalls: finalTools.length > 0 ? finalTools : null,
+							hasPending: pendingPermIdRef.current,
+							createdAt: new Date(),
+						};
+						setDbMessages((prev) => [...prev, assistantMsg]);
+						setStreamingText('');
+						setStreamingTools([]);
+						setIsStreaming(false);
+
+						// Reload threads list to update titles/timestamps
+						loadThreads();
+					}
+				},
+				onError(err) {
+					console.error('[chat] subscription error:', err);
+					setIsStreaming(false);
+				},
+			},
+		);
+
+		// Cleanup subscription if component unmounts mid-stream
+		return () => sub.unsubscribe();
 	}
 
 	function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -123,217 +250,393 @@ export default function ChatPage() {
 	const showThinking =
 		isStreaming && streamingText === '' && streamingTools.length === 0;
 
+	const activeThread = threads.find((t) => t.id === activeThreadId);
+
 	return (
 		<div
 			style={{
 				display: 'flex',
-				flexDirection: 'column',
 				height: '100vh',
 				background: 'var(--bg)',
+				overflow: 'hidden',
 			}}
 		>
-			{/* Header */}
+			{/* ── Sidebar ─────────────────────────────────────────────────── */}
 			<div
 				style={{
-					padding: '14px 24px',
-					borderBottom: '1px solid var(--border)',
+					width: 260,
+					flexShrink: 0,
+					borderRight: '1px solid var(--border)',
 					background: 'var(--surface)',
 					display: 'flex',
-					alignItems: 'center',
-					gap: 10,
-					flexShrink: 0,
+					flexDirection: 'column',
+					overflow: 'hidden',
 				}}
 			>
-				<span style={{ fontSize: 18 }}>⛵</span>
-				<span style={{ fontWeight: 700, fontSize: 15 }}>Corsair</span>
-				<span style={{ color: 'var(--muted)', fontSize: 12, marginLeft: 2 }}>
-					Personal Agent
-				</span>
+				{/* Sidebar header */}
+				<div
+					style={{
+						padding: '16px 14px 12px',
+						borderBottom: '1px solid var(--border)',
+						display: 'flex',
+						alignItems: 'center',
+						gap: 8,
+					}}
+				>
+					<span style={{ fontSize: 18 }}>⛵</span>
+					<span style={{ fontWeight: 700, fontSize: 14, flex: 1 }}>
+						Corsair
+					</span>
+				</div>
+
+				{/* New chat button */}
+				<div style={{ padding: '10px 10px 6px' }}>
+					<button
+						className="btn-ghost"
+						onClick={createNewThread}
+						style={{
+							width: '100%',
+							textAlign: 'left',
+							padding: '8px 10px',
+							fontSize: 13,
+							display: 'flex',
+							alignItems: 'center',
+							gap: 7,
+						}}
+					>
+						<span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
+						New chat
+					</button>
+				</div>
+
+				{/* Thread list */}
+				<div style={{ flex: 1, overflowY: 'auto', padding: '4px 6px' }}>
+					{threads.length === 0 ? (
+						<p
+							style={{
+								color: 'var(--muted)',
+								fontSize: 12,
+								padding: '8px 8px',
+							}}
+						>
+							No chats yet
+						</p>
+					) : (
+						threads.map((thread) => (
+							<ThreadItem
+								key={thread.id}
+								thread={thread}
+								active={thread.id === activeThreadId}
+								onClick={() => setActiveThreadId(thread.id)}
+							/>
+						))
+					)}
+				</div>
 			</div>
 
-			{/* Messages */}
+			{/* ── Chat area ──────────────────────────────────────────────── */}
 			<div
 				style={{
 					flex: 1,
-					overflowY: 'auto',
-					padding: '32px 24px',
 					display: 'flex',
 					flexDirection: 'column',
-					gap: 24,
+					overflow: 'hidden',
 				}}
 			>
+				{/* Chat header */}
 				<div
 					style={{
-						maxWidth: 760,
-						width: '100%',
-						margin: '0 auto',
+						padding: '14px 24px',
+						borderBottom: '1px solid var(--border)',
+						background: 'var(--surface)',
+						display: 'flex',
+						alignItems: 'center',
+						gap: 10,
+						flexShrink: 0,
+					}}
+				>
+					<span style={{ fontWeight: 600, fontSize: 14 }}>
+						{activeThread?.title ?? 'Personal Agent'}
+					</span>
+					<span style={{ color: 'var(--muted)', fontSize: 12 }}>
+						{activeThread ? '' : 'Start a new chat or select one'}
+					</span>
+				</div>
+
+				{/* Messages */}
+				<div
+					style={{
+						flex: 1,
+						overflowY: 'auto',
+						padding: '32px 24px',
 						display: 'flex',
 						flexDirection: 'column',
 						gap: 24,
 					}}
 				>
-					{/* Empty state */}
-					{messages.length === 0 && !isStreaming && (
-						<div
-							style={{
-								display: 'flex',
-								flexDirection: 'column',
-								alignItems: 'center',
-								color: 'var(--muted)',
-								gap: 12,
-								paddingTop: 80,
-							}}
-						>
-							<span style={{ fontSize: 40 }}>⛵</span>
-							<p style={{ fontSize: 15, fontWeight: 500, color: 'var(--text)' }}>
-								What can I automate for you?
-							</p>
-							<p style={{ fontSize: 13, textAlign: 'center', maxWidth: 360, lineHeight: 1.6 }}>
-								Ask me to run scripts, create scheduled workflows, or set up webhook
-								automations.
-							</p>
-						</div>
-					)}
-
-					{/* Committed messages */}
-					{messages.map((m, i) => (
-						<MessageBubble key={i} message={m} />
-					))}
-
-					{/* Streaming assistant message */}
-					{isStreaming && (
-						<div
-							style={{
-								display: 'flex',
-								flexDirection: 'column',
-								alignItems: 'flex-start',
-								gap: 6,
-							}}
-						>
-							<span
+					<div
+						style={{
+							maxWidth: 760,
+							width: '100%',
+							margin: '0 auto',
+							display: 'flex',
+							flexDirection: 'column',
+							gap: 24,
+						}}
+					>
+						{/* Empty state */}
+						{dbMessages.length === 0 && !isStreaming && (
+							<div
 								style={{
-									fontSize: 11,
+									display: 'flex',
+									flexDirection: 'column',
+									alignItems: 'center',
 									color: 'var(--muted)',
-									textTransform: 'uppercase',
-									letterSpacing: '0.05em',
-									paddingLeft: 4,
+									gap: 12,
+									paddingTop: 80,
 								}}
 							>
-								Corsair
-							</span>
-
-							{/* Tool pills */}
-							{streamingTools.length > 0 && (
-								<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-									{streamingTools.map((tc) => (
-										<ToolPill key={tc.toolCallId} tool={tc} />
-									))}
-								</div>
-							)}
-
-							{showThinking ? (
-								<div
+								<span style={{ fontSize: 40 }}>⛵</span>
+								<p
 									style={{
-										padding: '10px 14px',
-										background: 'var(--surface)',
-										border: '1px solid var(--border)',
-										borderRadius: '14px 14px 14px 4px',
-										color: 'var(--muted)',
-										fontSize: 13,
-									}}
-								>
-									Thinking…
-								</div>
-							) : streamingText ? (
-								<div
-									style={{
-										maxWidth: '85%',
-										padding: '10px 14px',
-										background: 'var(--surface)',
-										border: '1px solid var(--border)',
-										borderRadius: '14px 14px 14px 4px',
+										fontSize: 15,
+										fontWeight: 500,
 										color: 'var(--text)',
-										fontSize: 14,
-										lineHeight: 1.6,
-										whiteSpace: 'pre-wrap',
-										wordBreak: 'break-word',
 									}}
 								>
-									{streamingText}
-								</div>
-							) : null}
-						</div>
-					)}
+									What can I automate for you?
+								</p>
+								<p
+									style={{
+										fontSize: 13,
+										textAlign: 'center',
+										maxWidth: 360,
+										lineHeight: 1.6,
+									}}
+								>
+									Ask me to run scripts, create scheduled workflows, or set up
+									webhook automations.
+								</p>
+							</div>
+						)}
 
-					<div ref={bottomRef} />
+						{/* Committed messages */}
+						{dbMessages.map((m) => (
+							<MessageBubble
+								key={m.id}
+								role={m.role}
+								text={m.text}
+								toolCalls={(m.toolCalls as ToolCall[] | null) ?? undefined}
+								pendingPermissionId={
+									m.hasPending ? (m.hasPending as string) : undefined
+								}
+							/>
+						))}
+
+						{/* Streaming assistant message */}
+						{isStreaming && (
+							<div
+								style={{
+									display: 'flex',
+									flexDirection: 'column',
+									alignItems: 'flex-start',
+									gap: 6,
+								}}
+							>
+								<span
+									style={{
+										fontSize: 11,
+										color: 'var(--muted)',
+										textTransform: 'uppercase',
+										letterSpacing: '0.05em',
+										paddingLeft: 4,
+									}}
+								>
+									Corsair
+								</span>
+
+								{streamingTools.length > 0 && (
+									<div
+										style={{
+											display: 'flex',
+											flexDirection: 'column',
+											gap: 4,
+										}}
+									>
+										{streamingTools.map((tc) => (
+											<ToolPill key={tc.toolCallId} tool={tc} />
+										))}
+									</div>
+								)}
+
+								{showThinking ? (
+									<div
+										style={{
+											padding: '10px 14px',
+											background: 'var(--surface)',
+											border: '1px solid var(--border)',
+											borderRadius: '14px 14px 14px 4px',
+											color: 'var(--muted)',
+											fontSize: 13,
+										}}
+									>
+										Thinking…
+									</div>
+								) : streamingText ? (
+									<div
+										style={{
+											maxWidth: '85%',
+											padding: '10px 14px',
+											background: 'var(--surface)',
+											border: '1px solid var(--border)',
+											borderRadius: '14px 14px 14px 4px',
+											color: 'var(--text)',
+											fontSize: 14,
+											lineHeight: 1.6,
+											whiteSpace: 'pre-wrap',
+											wordBreak: 'break-word',
+										}}
+									>
+										{streamingText}
+									</div>
+								) : null}
+							</div>
+						)}
+
+						<div ref={bottomRef} />
+					</div>
 				</div>
-			</div>
 
-			{/* Input bar */}
-			<div
-				style={{
-					borderTop: '1px solid var(--border)',
-					background: 'var(--surface)',
-					padding: '16px 24px',
-					flexShrink: 0,
-				}}
-			>
-				<form
-					onSubmit={onSubmit}
+				{/* Input bar */}
+				<div
 					style={{
-						display: 'flex',
-						gap: 10,
-						maxWidth: 760,
-						margin: '0 auto',
-						alignItems: 'flex-end',
+						borderTop: '1px solid var(--border)',
+						background: 'var(--surface)',
+						padding: '16px 24px',
+						flexShrink: 0,
 					}}
 				>
-					<textarea
-						ref={textareaRef}
-						value={input}
-						onChange={(e) => setInput(e.target.value)}
-						onKeyDown={onKeyDown}
-						placeholder="Message Corsair… (Enter to send, Shift+Enter for newline)"
-						rows={1}
-						disabled={isStreaming}
+					<form
+						onSubmit={onSubmit}
 						style={{
-							flex: 1,
-							resize: 'none',
-							minHeight: 40,
-							maxHeight: 200,
-							overflowY: 'auto',
-							padding: '9px 12px',
-							lineHeight: 1.5,
-							fontSize: 14,
-							background: 'var(--bg)',
-							border: '1px solid var(--border)',
-							borderRadius: 'var(--radius)',
-							color: 'var(--text)',
-							fontFamily: 'var(--font)',
-							outline: 'none',
+							display: 'flex',
+							gap: 10,
+							maxWidth: 760,
+							margin: '0 auto',
+							alignItems: 'flex-end',
 						}}
-						onInput={(e) => {
-							const el = e.currentTarget;
-							el.style.height = 'auto';
-							el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-						}}
-					/>
-					<button
-						type="submit"
-						disabled={isStreaming || !input.trim()}
-						className="btn-primary"
-						style={{ height: 40, paddingLeft: 18, paddingRight: 18, flexShrink: 0 }}
 					>
-						{isStreaming ? '…' : 'Send'}
-					</button>
-				</form>
+						<textarea
+							ref={textareaRef}
+							value={input}
+							onChange={(e) => setInput(e.target.value)}
+							onKeyDown={onKeyDown}
+							placeholder="Message Corsair… (Enter to send, Shift+Enter for newline)"
+							rows={1}
+							disabled={isStreaming}
+							style={{
+								flex: 1,
+								resize: 'none',
+								minHeight: 40,
+								maxHeight: 200,
+								overflowY: 'auto',
+								padding: '9px 12px',
+								lineHeight: 1.5,
+								fontSize: 14,
+								background: 'var(--bg)',
+								border: '1px solid var(--border)',
+								borderRadius: 'var(--radius)',
+								color: 'var(--text)',
+								fontFamily: 'var(--font)',
+								outline: 'none',
+							}}
+							onInput={(e) => {
+								const el = e.currentTarget;
+								el.style.height = 'auto';
+								el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+							}}
+						/>
+						<button
+							type="submit"
+							disabled={isStreaming || !input.trim()}
+							className="btn-primary"
+							style={{
+								height: 40,
+								paddingLeft: 18,
+								paddingRight: 18,
+								flexShrink: 0,
+							}}
+						>
+							{isStreaming ? '…' : 'Send'}
+						</button>
+					</form>
+				</div>
 			</div>
 		</div>
 	);
 }
 
-function MessageBubble({ message }: { message: Message }) {
-	const isUser = message.role === 'user';
+// ─────────────────────────────────────────────────────────────────────────────
+// Thread item in sidebar
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ThreadItem({
+	thread,
+	active,
+	onClick,
+}: {
+	thread: Thread;
+	active: boolean;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			onClick={onClick}
+			style={{
+				width: '100%',
+				textAlign: 'left',
+				padding: '8px 10px',
+				borderRadius: 'var(--radius)',
+				background: active ? 'var(--border)' : 'transparent',
+				border: 'none',
+				color: active ? 'var(--text)' : 'var(--muted)',
+				fontSize: 13,
+				cursor: 'pointer',
+				display: 'block',
+				overflow: 'hidden',
+				textOverflow: 'ellipsis',
+				whiteSpace: 'nowrap',
+				transition: 'background 0.1s',
+			}}
+			onMouseEnter={(e) => {
+				if (!active) e.currentTarget.style.background = '#222';
+			}}
+			onMouseLeave={(e) => {
+				if (!active) e.currentTarget.style.background = 'transparent';
+			}}
+		>
+			{thread.title ?? 'New chat'}
+		</button>
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message bubble
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MessageBubble({
+	role,
+	text,
+	toolCalls,
+	pendingPermissionId,
+}: {
+	role: 'user' | 'assistant';
+	text: string;
+	toolCalls?: ToolCall[];
+	pendingPermissionId?: string;
+}) {
+	const isUser = role === 'user';
+
 	return (
 		<div
 			style={{
@@ -356,15 +659,15 @@ function MessageBubble({ message }: { message: Message }) {
 				{isUser ? 'You' : 'Corsair'}
 			</span>
 
-			{message.role === 'assistant' && message.toolCalls.length > 0 && (
+			{!isUser && toolCalls && toolCalls.length > 0 && (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-					{message.toolCalls.map((tc) => (
+					{toolCalls.map((tc) => (
 						<ToolPill key={tc.toolCallId} tool={tc} />
 					))}
 				</div>
 			)}
 
-			{message.text && (
+			{text && (
 				<div
 					style={{
 						maxWidth: '85%',
@@ -379,12 +682,40 @@ function MessageBubble({ message }: { message: Message }) {
 						wordBreak: 'break-word',
 					}}
 				>
-					{message.text}
+					{text}
 				</div>
+			)}
+
+			{!isUser && pendingPermissionId && (
+				<a
+					href={`/permissions/${pendingPermissionId}`}
+					target="_blank"
+					rel="noopener noreferrer"
+					style={{
+						display: 'inline-flex',
+						alignItems: 'center',
+						gap: 8,
+						padding: '8px 14px',
+						background: '#713f12',
+						border: '1px solid var(--warn)',
+						borderRadius: 'var(--radius)',
+						color: 'var(--warn)',
+						fontSize: 13,
+						fontWeight: 500,
+						textDecoration: 'none',
+					}}
+				>
+					<span>&#x1f512;</span>
+					Review & approve permission
+				</a>
 			)}
 		</div>
 	);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool pill
+// ─────────────────────────────────────────────────────────────────────────────
 
 function ToolPill({ tool }: { tool: ToolCall }) {
 	return (

@@ -6,8 +6,9 @@ import {
 } from '@trpc/client';
 import type { AppRouter } from '../../server/trpc/router';
 
-const BASE_URL =
-	process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// Empty string → relative URL (/trpc) → flows through Next.js rewrite proxy.
+// Set NEXT_PUBLIC_API_URL to override (e.g. direct cloudflared server URL).
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 export const trpc = createTRPCClient<AppRouter>({
 	links: [

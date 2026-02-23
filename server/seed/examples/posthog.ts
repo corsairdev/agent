@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const posthogExamples: CodeExample[] = [
+export const posthogExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Track a custom event in PostHog for a specific user. Use this to record user actions such as button clicks, feature usage, form submissions, or any application-level event you want to analyze.',

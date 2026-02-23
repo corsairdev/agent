@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const slackExamples: CodeExample[] = [
+export const slackExamples: BaseCodeExample[] = [
 	{
 		description:
 			'List all Slack channels in the workspace to discover available channels and inspect their names and IDs. Use this before posting a message or reading history so you know what channels exist.',

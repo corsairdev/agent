@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const googlesheetsExamples: CodeExample[] = [
+export const googlesheetsExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Read rows from a Google Sheet by spreadsheet ID and range. Logs the raw cell values returned. Use this to inspect the current contents of a sheet before writing or updating rows.',

@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const googledriveExamples: CodeExample[] = [
+export const googledriveExamples: BaseCodeExample[] = [
 	{
 		description:
 			'List files in Google Drive and inspect their names, types, and IDs. Use this to discover what files are available before reading, downloading, or sharing them.',

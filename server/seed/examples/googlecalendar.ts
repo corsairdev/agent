@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const googlecalendarExamples: CodeExample[] = [
+export const googlecalendarExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Create a Google Calendar event on the primary calendar with a title, description, start and end times, timezone, and optional attendees. Sends email notifications to invited attendees.',

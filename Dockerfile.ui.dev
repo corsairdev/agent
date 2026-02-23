@@ -1,0 +1,11 @@
+FROM node:22-slim
+
+RUN npm install -g pnpm
+
+WORKDIR /app/ui
+
+# Install UI dependencies in a cached layer.
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN pnpm install
+
+# Source code is NOT copied here — it's mounted at runtime via docker-compose.

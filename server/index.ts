@@ -3,13 +3,18 @@ import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import type { ModelMessage, ToolModelMessage } from 'ai';
 import { processWebhook } from 'corsair';
 import { eq } from 'drizzle-orm';
-import type { Response } from 'express';
 import express from 'express';
 import cron from 'node-cron';
-import type { AgentOutput } from './agent';
-import { runAgent } from './agent';
+import { runAgent, WORKFLOW_FAILURE_PROMPT } from './agent';
 import { corsair } from './corsair';
-import { db, pendingSessions, workflows } from './db';
+import {
+	db,
+	permissions,
+	threadMessages,
+	threads,
+	whatsappMessages,
+	workflows,
+} from './db';
 import {
 	createExecution,
 	executeWorkflow,
@@ -22,7 +27,7 @@ import { appRouter } from './trpc/router';
 import { startWhatsApp } from './whatsapp/index';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Agent output handler + resume helper
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildResumeMessages(
@@ -47,60 +52,47 @@ function buildResumeMessages(
 	];
 }
 
-async function handleAgentOutput(output: AgentOutput, res: Response) {
-	if (output.type === 'needs_input') {
-		const [session] = await db
-			.insert(pendingSessions)
-			.values({
-				messages: output.pendingMessages,
-				toolCallId: output.toolCallId,
-				toolName: output.toolName,
-				agentType: 'main',
-				plugin: null,
-			})
-			.returning({ id: pendingSessions.id });
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflow failure escalation
+// ─────────────────────────────────────────────────────────────────────────────
 
-		return res.json({
-			type: 'needs_input',
-			question: output.question,
-			sessionId: session!.id,
-		});
-	}
+async function escalateWorkflowFailure(params: {
+	workflowId: string;
+	workflowName: string;
+	code: string;
+	triggerType: 'cron' | 'webhook';
+	error: string;
+	eventPayload?: unknown;
+}) {
+	const { workflowId, workflowName, code, triggerType, error, eventPayload } =
+		params;
 
-	if (output.type === 'message') {
-		return res.json({ type: 'message', text: output.text });
-	}
+	const payloadSection = eventPayload
+		? `\nEvent payload that triggered this run:\n${JSON.stringify(eventPayload, null, 2)}\n`
+		: '';
 
-	if (output.type === 'script') {
-		if (output.error) {
-			return res
-				.status(500)
-				.json({ type: 'script', success: false, error: output.error });
-		}
-		return res.json({
-			type: 'script',
-			success: true,
-			output: output.output ?? '',
-			message: output.message,
-		});
-	}
+	const prompt =
+		`A ${triggerType} workflow failed and needs your attention.\n\n` +
+		`Workflow ID: ${workflowId}\n` +
+		`Workflow name: ${workflowName}\n` +
+		`Trigger type: ${triggerType}\n\n` +
+		`Error:\n${error}\n` +
+		payloadSection +
+		`\nWorkflow code:\n\`\`\`typescript\n${code}\n\`\`\`\n\n` +
+		`Please:\n` +
+		`1. Diagnose the error — read the code and the error to understand the root cause.\n` +
+		`2. Fix the missed run — write and execute a one-off script that performs what the workflow was supposed to do for this specific failed invocation${eventPayload ? ', using the event payload above' : ''}.\n` +
+		`3. Fix and update the workflow — correct the underlying issue and update it via manage_workflows so it won't fail again.`;
 
-	// workflow — agent already stored it via manage_workflows create
-	let fallbackMessage: string;
-	if (output.webhookTrigger) {
-		fallbackMessage = `Webhook workflow "${output.workflowId}" registered — fires on ${output.webhookTrigger.plugin}.${output.webhookTrigger.action}`;
-	} else if (output.cronSchedule) {
-		fallbackMessage = `Workflow scheduled with cron: ${output.cronSchedule}`;
-	} else {
-		fallbackMessage = 'Workflow stored (manual trigger)';
-	}
+	console.log(`[escalation] Escalating failure for workflow: ${workflowId}`);
 
-	return res.json({
-		type: 'workflow',
-		workflowId: output.workflowId,
-		cronSchedule: output.cronSchedule,
-		webhookTrigger: output.webhookTrigger,
-		message: output.message ?? fallbackMessage,
+	runAgent([{ role: 'user', content: prompt }], {
+		systemExtra: WORKFLOW_FAILURE_PROMPT,
+	}).catch((err) => {
+		console.error(
+			`[escalation] Agent escalation failed for ${workflowId}:`,
+			err,
+		);
 	});
 }
 
@@ -148,6 +140,14 @@ async function dispatchWebhookWorkflows(
 					`[webhook] Workflow ${workflow.workflowId} failed:`,
 					result.error,
 				);
+				escalateWorkflowFailure({
+					workflowId: workflow.workflowId,
+					workflowName: workflow.name,
+					code: workflow.code,
+					triggerType: 'webhook',
+					error: result.error ?? 'Unknown error',
+					eventPayload,
+				});
 			}
 		} catch (error) {
 			const errorMessage =
@@ -157,6 +157,14 @@ async function dispatchWebhookWorkflows(
 				`[webhook] Error executing workflow ${workflow.workflowId}:`,
 				error,
 			);
+			escalateWorkflowFailure({
+				workflowId: workflow.workflowId,
+				workflowName: workflow.name,
+				code: workflow.code,
+				triggerType: 'webhook',
+				error: errorMessage,
+				eventPayload,
+			});
 		}
 	}
 }
@@ -170,7 +178,7 @@ async function main() {
 
 	app.use(express.json());
 
-	// ── CORS (for UI on port 3000) ──────────────────────────────────────────
+	// ── CORS (for UI on port 3001) ──────────────────────────────────────────
 	app.use((req, res, next) => {
 		res.setHeader('Access-Control-Allow-Origin', '*');
 		res.setHeader(
@@ -208,77 +216,6 @@ async function main() {
 		}
 	});
 
-	// ── Agent trigger endpoint ──────────────────────────────────────────────
-	app.post('/trigger', async (req, res) => {
-		console.log('[server] /trigger endpoint called');
-
-		try {
-			const { prompt } = req.body;
-
-			if (!prompt || typeof prompt !== 'string') {
-				return res.status(400).json({ error: 'Missing or invalid prompt' });
-			}
-
-			console.log(`[server] Received prompt: ${prompt.substring(0, 80)}`);
-
-			const output = await runAgent([{ role: 'user', content: prompt }]);
-			return handleAgentOutput(output, res);
-		} catch (error) {
-			console.error('[server] Error processing request:', error);
-			return res.status(500).json({
-				error: error instanceof Error ? error.message : 'Unknown error',
-			});
-		}
-	});
-
-	// ── Resume endpoint (human answered the agent's question) ──────────────
-	app.post('/trigger/resume', async (req, res) => {
-		console.log('[server] /trigger/resume endpoint called');
-
-		try {
-			const { sessionId, answer } = req.body;
-
-			if (!sessionId || typeof sessionId !== 'string') {
-				return res.status(400).json({ error: 'Missing or invalid sessionId' });
-			}
-			if (!answer || typeof answer !== 'string') {
-				return res.status(400).json({ error: 'Missing or invalid answer' });
-			}
-
-			const [session] = await db
-				.select()
-				.from(pendingSessions)
-				.where(eq(pendingSessions.id, sessionId))
-				.limit(1);
-
-			if (!session) {
-				return res.status(404).json({ error: 'Session not found' });
-			}
-
-			console.log(
-				`[server] Resuming session ${sessionId} with answer: "${answer.substring(0, 80)}"`,
-			);
-
-			const resumeMessages = buildResumeMessages(
-				session.messages as ModelMessage[],
-				session.toolCallId,
-				session.toolName,
-				answer,
-			);
-
-			// Clean up before calling the agent so a crash doesn't leave a stale session
-			await db.delete(pendingSessions).where(eq(pendingSessions.id, sessionId));
-
-			const output = await runAgent(resumeMessages);
-			return handleAgentOutput(output, res);
-		} catch (error) {
-			console.error('[server] Error resuming session:', error);
-			return res.status(500).json({
-				error: error instanceof Error ? error.message : 'Unknown error',
-			});
-		}
-	});
-
 	// ── tRPC router ───────────────────────────────────────────────────────────
 	app.use(
 		'/trpc',
@@ -288,6 +225,168 @@ async function main() {
 		}),
 	);
 
+	// ── Permission approval endpoints ────────────────────────────────────────
+
+	app.get('/hello', (req, res) => {
+		res.setHeader('Content-Type', 'text/html');
+		res.send(`
+			<!DOCTYPE html>
+			<html>
+				<head>
+					<title>Hello Page</title>
+					<style>
+						body { font-family: sans-serif; background: #f8f8fa; margin: 32px; }
+						.card { background: #fff; border-radius: 12px; box-shadow: 0 2px 12px #0001; padding: 2em 3em; max-width: 500px; margin: 0 auto; }
+						h1 { margin-top: 0; color: #222; }
+						footer { margin-top: 2em; color: #888; font-size: .95em; }
+					</style>
+				</head>
+				<body>
+					<div class="card">
+						<h1>Hello!</h1>
+						<p>This is a sample /hello endpoint for testing.</p>
+						<div>hi dev</div>
+						<footer>Agent server is running 🎉</footer>
+					</div>
+				</body>
+			</html>
+		`);
+	});
+
+	app.get('/api/permissions/:id', async (req, res) => {
+		const [perm] = await db
+			.select()
+			.from(permissions)
+			.where(eq(permissions.id, req.params.id!))
+			.limit(1);
+
+		if (!perm) return res.status(404).json({ error: 'Permission not found' });
+		return res.json(perm);
+	});
+
+	app.post('/api/permissions/:id/resolve', async (req, res) => {
+		const { action } = req.body as { action: 'approve' | 'decline' };
+
+		if (action !== 'approve' && action !== 'decline') {
+			return res
+				.status(400)
+				.json({ error: 'action must be "approve" or "decline"' });
+		}
+
+		const [perm] = await db
+			.select()
+			.from(permissions)
+			.where(eq(permissions.id, req.params.id!))
+			.limit(1);
+
+		if (!perm) return res.status(404).json({ error: 'Permission not found' });
+		if (perm.status !== 'pending') {
+			return res
+				.status(400)
+				.json({ error: `Permission already ${perm.status}` });
+		}
+
+		const newStatus = action === 'approve' ? 'granted' : 'declined';
+		await db
+			.update(permissions)
+			.set({ status: newStatus, updatedAt: new Date() })
+			.where(eq(permissions.id, perm.id));
+
+		const answer =
+			action === 'approve'
+				? 'Permission granted. Proceed with the action.'
+				: 'Permission declined. Do not proceed with this action.';
+
+		// Resume the agent via the linked thread message
+		if (perm.messageId) {
+			const [msg] = await db
+				.select()
+				.from(threadMessages)
+				.where(eq(threadMessages.id, perm.messageId))
+				.limit(1);
+
+			if (
+				msg?.pendingMessages &&
+				msg.pendingToolCallId &&
+				msg.pendingToolName
+			) {
+				// Determine source from the thread
+				const [thread] = await db
+					.select({ source: threads.source, jid: threads.jid })
+					.from(threads)
+					.where(eq(threads.id, msg.threadId))
+					.limit(1);
+
+				// Clear pending state from message
+				await db
+					.update(threadMessages)
+					.set({
+						pendingMessages: null,
+						pendingToolCallId: null,
+						pendingToolName: null,
+					})
+					.where(eq(threadMessages.id, msg.id));
+
+				const resumeMessages = buildResumeMessages(
+					msg.pendingMessages as ModelMessage[],
+					msg.pendingToolCallId,
+					msg.pendingToolName,
+					answer,
+				);
+
+				if (thread?.source === 'whatsapp' && thread.jid) {
+					// Insert a synthetic WhatsApp message so the poller picks it up
+					await db.insert(whatsappMessages).values({
+						jid: thread.jid,
+						senderJid: 'system',
+						senderName: 'Permission System',
+						content: answer,
+						sentAt: new Date(),
+						isGroup: false,
+						isBot: false,
+						processed: false,
+					});
+				} else {
+					// Web thread: resume agent and save result to the thread
+					runAgent(resumeMessages)
+						.then(async (output) => {
+							let text = '';
+							if (output.type === 'message') text = output.text;
+							else if (output.type === 'script')
+								text = output.message || output.output || '';
+							else if (output.type === 'workflow')
+								text =
+									output.message ||
+									`Workflow ${output.workflowId ?? ''} updated`;
+							else if (output.type === 'needs_input') text = output.question;
+
+							await db.insert(threadMessages).values({
+								threadId: msg.threadId,
+								role: 'assistant',
+								text,
+							});
+							await db
+								.update(threads)
+								.set({ updatedAt: new Date() })
+								.where(eq(threads.id, msg.threadId));
+						})
+						.catch((err) => {
+							console.error('[permissions] Agent resume failed:', err);
+						});
+				}
+			}
+		}
+
+		return res.json({
+			success: true,
+			status: newStatus,
+			message:
+				action === 'approve'
+					? 'Permission granted — agent will continue.'
+					: 'Permission declined — action cancelled.',
+		});
+	});
+
 	// ── Cron scheduler (runs every minute) ────────────────────────────────────
 	cron.schedule('* * * * *', async () => {
 		try {
@@ -296,13 +395,11 @@ async function main() {
 			for (const workflow of workflowsToRun) {
 				console.log(`[cron] Executing workflow: ${workflow.workflowId}`);
 
-				// Create execution record
 				const execution = await createExecution(workflow.id, 'cron', 'running');
 
 				if (!execution) continue;
 
 				try {
-					// Execute the workflow
 					const result = await executeWorkflow(workflow.name, workflow.code);
 
 					if (result.success) {
@@ -323,9 +420,15 @@ async function main() {
 							`[cron] Workflow ${workflow.workflowId} failed:`,
 							result.error,
 						);
+						escalateWorkflowFailure({
+							workflowId: workflow.workflowId,
+							workflowName: workflow.name,
+							code: workflow.code,
+							triggerType: 'cron',
+							error: result.error ?? 'Unknown error',
+						});
 					}
 
-					// Update next run time
 					const workflowRecord = await db
 						.select()
 						.from(workflows)
@@ -356,6 +459,13 @@ async function main() {
 						`[cron] Error executing workflow ${workflow.workflowId}:`,
 						error,
 					);
+					escalateWorkflowFailure({
+						workflowId: workflow.workflowId,
+						workflowName: workflow.name,
+						code: workflow.code,
+						triggerType: 'cron',
+						error: errorMessage,
+					});
 				}
 			}
 		} catch (error) {
@@ -367,14 +477,9 @@ async function main() {
 	const PORT = Number(process.env.PORT ?? 3000);
 	app.listen(PORT, () => {
 		console.log(`[server] Listening on http://localhost:${PORT}`);
-		console.log(
-			`[server] Trigger agent with: curl -X POST http://localhost:${PORT}/trigger -H "Content-Type: application/json" -d '{"prompt":"your prompt here"}'`,
-		);
 	});
 
 	// ── WhatsApp listener ─────────────────────────────────────────────────────
-	// Set WHATSAPP_ENABLED=true in .env to activate.
-	// On first run a QR code is printed to the terminal — scan it with WhatsApp.
 	if (process.env.WHATSAPP_ENABLED === 'true') {
 		console.log('[server] Starting WhatsApp listener...');
 		startWhatsApp().catch((err) => {

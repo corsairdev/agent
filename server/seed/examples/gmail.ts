@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const gmailExamples: CodeExample[] = [
+export const gmailExamples: BaseCodeExample[] = [
 	{
 		description:
 			'List recent Gmail messages in the inbox and inspect subject lines, senders, and dates. Use this to give the user an overview of their recent emails or to find a specific message before reading or replying to it.',

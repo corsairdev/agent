@@ -92,11 +92,20 @@ If this fails due to native module build errors, it's non-critical. Skip it and 
 docker compose up --build -d
 ```
 
-This builds the agent image (Node 22 with all dependencies pre-installed) and starts both Postgres and the agent server. The first build takes a couple of minutes. Subsequent starts are instant since Docker caches the dependency layer.
+This builds all images and starts the full stack:
+
+| Service | URL | Purpose |
+|---|---|---|
+| Agent (server) | http://localhost:3000 | tRPC API + webhook receiver |
+| UI (Next.js) | http://localhost:3001 | Web chat interface |
+| Drizzle Studio | http://localhost:4983 | Database browser |
+| cloudflared | see logs | Public tunnel to the agent |
+
+The first build takes a couple of minutes. Subsequent starts are instant since Docker caches the dependency layers.
 
 Database migrations run automatically at container startup before the server starts — no manual migration step needed.
 
-The agent mounts the source code from the host, so file edits are reflected immediately — `tsx` hot-reloads inside the container. `node_modules` is managed entirely by the container; the host version is never used at runtime.
+Both the agent server (`tsx watch`) and the UI (`next dev`) hot-reload on file changes. `node_modules` is managed entirely by the container; the host version is never used at runtime.
 
 If Docker isn't running, start it and wait for it to be ready:
 - macOS: `open -a Docker`
@@ -106,6 +115,13 @@ Then poll until it's actually up before retrying:
 ```bash
 until docker info &>/dev/null 2>&1; do sleep 2; done
 ```
+
+**Get the cloudflared public URL** (needed for webhooks):
+```bash
+docker compose logs cloudflared 2>&1 | grep -o 'https://[^ ]*\.trycloudflare\.com'
+```
+
+This URL is how external services (WhatsApp, Slack, etc.) reach the agent. It changes on every restart unless you configure a named Cloudflare tunnel.
 
 To follow the agent logs:
 ```bash
@@ -190,19 +206,9 @@ If yes, start the `/add-plugin` skill for each one. If no, continue.
 
 ---
 
-## Phase 6: UI (optional)
+## Phase 6: Launch
 
-Ask the user:
-
-> "Do you want a web UI to chat with your agent from a browser, in addition to WhatsApp?"
-
-If yes, start the `/add-ui` skill. If no, continue.
-
----
-
-## Phase 7: Launch
-
-The server is already running from step 1f. If it was restarted during plugin setup, confirm it's healthy:
+All services are already running from step 1f. If any were restarted during plugin setup, confirm the stack is healthy:
 
 ```bash
 docker compose ps
@@ -210,30 +216,39 @@ docker compose logs --tail=30 agent
 ```
 
 Check for:
-- `agent` service status: `running`
+- All services status: `running`
 - `[whatsapp] Connected to WhatsApp` — if WhatsApp was set up
 - No plugin errors or crashes
 
-Tell the user to send a test message on WhatsApp and confirm the agent responds.
+Get the cloudflared URL and share it with the user:
+```bash
+docker compose logs cloudflared 2>&1 | grep -o 'https://[^ ]*\.trycloudflare\.com'
+```
+
+Tell the user to send a test message on WhatsApp and confirm the agent responds. Let them know the web UI is at http://localhost:3001 and Drizzle Studio at http://localhost:4983.
 
 Congratulate them — their agent is live.
 
 **Useful commands to share with the user:**
 ```bash
-docker compose logs -f agent        # follow live logs
-docker compose up -d agent          # restart and pick up .env changes
+docker compose logs -f agent        # follow agent logs
+docker compose logs -f ui           # follow UI logs
+docker compose logs cloudflared     # get the public tunnel URL
+docker compose up -d agent          # restart agent and pick up .env changes
 docker compose down                 # stop everything
 docker compose up -d                # start everything again
 docker compose up --build -d        # rebuild after package.json changes
 ```
 
-> **Note:** Use `docker compose up -d agent` (not `restart`) whenever `.env` changes — `restart` preserves the old environment from container creation.
+> **Note:** Use `docker compose up -d <service>` (not `restart`) whenever `.env` changes — `restart` preserves the old environment from container creation.
 
 ---
 
 ## Troubleshooting
 
-**`docker compose up --build` fails during image build:** Usually a network issue or missing build tools. Check Docker is running. If it fails on `pnpm install` inside the container, check `Dockerfile.dev` — the `apt-get` step installs build tools needed by baileys.
+**`docker compose up --build` fails during image build:** Usually a network issue or missing build tools. Check Docker is running. If it fails on `pnpm install` inside the container, check `Dockerfile.dev` (agent) or `Dockerfile.ui.dev` (UI) — the `apt-get` step in `Dockerfile.dev` installs build tools needed by baileys.
+
+**No cloudflared URL in logs:** Wait ~10s after startup, then retry `docker compose logs cloudflared`. If the `cloudflared` container exited, check `docker compose ps` and restart it: `docker compose up -d cloudflared`. The URL changes on every restart.
 
 **Agent crashes on startup:** Run `docker compose logs agent`. Common causes:
 - Missing `CORSAIR_KEK` in `.env`

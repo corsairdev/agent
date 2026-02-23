@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const resendExamples: CodeExample[] = [
+export const resendExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Send a transactional email using Resend with a plain text body. Logs the email ID on success. Use this to send confirmation emails, notifications, or alerts programmatically.',

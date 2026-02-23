@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const linearExamples: CodeExample[] = [
+export const linearExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Create a new Linear issue in a team. Lists all teams first — if multiple teams exist, logs them and asks the user to specify which one. Sets title, description, and priority (1=urgent, 2=high, 3=medium, 4=low).',

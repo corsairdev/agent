@@ -2,6 +2,7 @@
 // Code examples for the agent
 //
 // Each example has:
+// - plugin: The plugin/service name (e.g. "slack", "github")
 // - description: A natural language description of what the code does
 // - code: The TypeScript code example
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,16 +23,16 @@ import { slackExamples } from './examples/slack';
 import { tavilyExamples } from './examples/tavily';
 
 export const codeExamples = [
-	...slackExamples,
-	...githubExamples,
-	...linearExamples,
-	...gmailExamples,
-	...hubspotExamples,
-	...resendExamples,
-	...posthogExamples,
-	...googledriveExamples,
-	...googlesheetsExamples,
-	...googlecalendarExamples,
-	...tavilyExamples,
-	...discordExamples,
+	...slackExamples.map((e) => ({ ...e, plugin: 'slack' })),
+	...githubExamples.map((e) => ({ ...e, plugin: 'github' })),
+	...linearExamples.map((e) => ({ ...e, plugin: 'linear' })),
+	...gmailExamples.map((e) => ({ ...e, plugin: 'gmail' })),
+	...hubspotExamples.map((e) => ({ ...e, plugin: 'hubspot' })),
+	...resendExamples.map((e) => ({ ...e, plugin: 'resend' })),
+	...posthogExamples.map((e) => ({ ...e, plugin: 'posthog' })),
+	...googledriveExamples.map((e) => ({ ...e, plugin: 'googledrive' })),
+	...googlesheetsExamples.map((e) => ({ ...e, plugin: 'googlesheets' })),
+	...googlecalendarExamples.map((e) => ({ ...e, plugin: 'googlecalendar' })),
+	...tavilyExamples.map((e) => ({ ...e, plugin: 'tavily' })),
+	...discordExamples.map((e) => ({ ...e, plugin: 'discord' })),
 ];

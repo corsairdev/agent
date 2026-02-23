@@ -112,19 +112,38 @@ export const workflowExecutions = pgTable('workflow_executions', {
 	finishedAt: timestamp('finished_at'),
 });
 
-// ── Human-in-the-loop pending sessions ────────────────────────────────────────
-export const pendingSessions = pgTable('pending_sessions', {
+// ── Threads and messages ───────────────────────────────────────────────────────
+
+export const threads = pgTable('threads', {
 	id: uuid('id').primaryKey().defaultRandom(),
-	/** Full CoreMessage[] conversation history serialised as JSON */
-	messages: jsonb('messages').notNull(),
-	/** The toolCallId of the pausing tool call, needed to inject the human answer */
-	toolCallId: text('tool_call_id').notNull(),
-	/** The name of the pausing tool (e.g. 'ask_human'), needed for ToolResultPart */
-	toolName: text('tool_name').notNull(),
-	/** Which agent owns this session — used by the supervisor to route resumes */
-	agentType: text('agent_type').notNull().default('main'),
-	/** For setup sessions: the plugin being configured (e.g. 'googlecalendar') */
-	plugin: text('plugin'),
+	/** Auto-generated title (first user message, truncated) or null */
+	title: text('title'),
+	/** Source channel */
+	source: text('source', { enum: ['web', 'whatsapp'] })
+		.notNull()
+		.default('web'),
+	/** WhatsApp chat JID — null for web threads */
+	jid: text('jid'),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const threadMessages = pgTable('thread_messages', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	threadId: uuid('thread_id')
+		.notNull()
+		.references(() => threads.id, { onDelete: 'cascade' }),
+	role: text('role', { enum: ['user', 'assistant'] }).notNull(),
+	/** Main text content */
+	text: text('text').notNull().default(''),
+	/** Tool calls made during this assistant turn [{toolCallId, toolName, done}] */
+	toolCalls: jsonb('tool_calls'),
+	/** Full ModelMessage[] history serialised for agent resume (ask_human pause) */
+	pendingMessages: jsonb('pending_messages'),
+	/** toolCallId of the pausing ask_human call */
+	pendingToolCallId: text('pending_tool_call_id'),
+	/** Tool name of the pausing call (always 'ask_human') */
+	pendingToolName: text('pending_tool_name'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -169,26 +188,27 @@ export const whatsappChats = pgTable('whatsapp_chats', {
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
-/** One pending agent session per chat JID (for multi-turn ask_human flows) */
-export const whatsappSessions = pgTable('whatsapp_sessions', {
-	jid: text('jid').primaryKey(),
-	/** Full ModelMessage[] conversation history — used to resume the agent */
-	messages: jsonb('messages').notNull(),
-	/** The toolCallId of the pausing ask_human call */
-	toolCallId: text('tool_call_id').notNull(),
-	/** Tool name (always 'ask_human') */
-	toolName: text('tool_name').notNull(),
-	/** The question the agent asked — also sent to the user via WhatsApp */
-	question: text('question').notNull(),
-	createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+// ── Permission requests (human-in-the-loop approval for protected endpoints) ──
 
-// ── Code examples for agent ────────────────────────────────────────────────────
-export const codeExamples = pgTable('code_examples', {
+export const permissions = pgTable('permissions', {
 	id: uuid('id').primaryKey().defaultRandom(),
-	vector: jsonb('vector').notNull(), // Embedding vector as JSON array
-	description: text('description').notNull(), // Raw text description
-	code: text('code').notNull(), // TypeScript code example
+	/** Full endpoint path, e.g. "slack.messages.post" */
+	endpoint: text('endpoint').notNull(),
+	/** Plugin name, e.g. "slack" */
+	plugin: text('plugin').notNull(),
+	/** Operation within the plugin, e.g. "messages.post" */
+	operation: text('operation').notNull(),
+	/** The arguments the agent tried to pass — displayed on the approval page */
+	args: jsonb('args'),
+	/** Human-readable description of what the action will do */
+	description: text('description').notNull(),
+	status: text('status', {
+		enum: ['pending', 'granted', 'declined', 'completed'],
+	})
+		.notNull()
+		.default('pending'),
+	/** Links to thread_messages.id — the assistant message that triggered this permission request */
+	messageId: uuid('message_id'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

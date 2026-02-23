@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const hubspotExamples: CodeExample[] = [
+export const hubspotExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Search for a HubSpot contact by email address. Logs the contact details including name, company, and lifecycle stage. Use this to check if a contact already exists before creating a new one.',

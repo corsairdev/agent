@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const tavilyExamples: CodeExample[] = [
+export const tavilyExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Search the web using Tavily to get up-to-date information on any topic. Returns a list of relevant results with URLs, titles, and content snippets. Use this when you need current information that is not in your training data.',

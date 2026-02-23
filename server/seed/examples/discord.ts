@@ -1,6 +1,6 @@
-import type { CodeExample } from './types';
+import type { BaseCodeExample } from './types';
 
-export const discordExamples: CodeExample[] = [
+export const discordExamples: BaseCodeExample[] = [
 	{
 		description:
 			'Send a message to a Discord channel by channel ID. Use this to post announcements, notifications, or any text to a channel. You need the channel ID, which you can get from Discord developer mode or by listing guild channels.',

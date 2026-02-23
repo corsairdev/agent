@@ -5,6 +5,8 @@ services:
       POSTGRES_DB: corsair
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,9 +26,9 @@ services:
       # Prevents the host directory from shadowing native modules compiled for Linux.
       - /app/node_modules
     environment:
-      # Override DATABASE_URL so the agent reaches postgres via the Docker network,
-      # not localhost (which would point to the container itself).
       - DATABASE_URL=postgresql://postgres:secret@postgres:5432/corsair
+      # Enable polling so tsx watch detects changes via Docker Desktop's virtiofs share.
+      - CHOKIDAR_USEPOLLING=true
     env_file:
       - .env
     ports:
@@ -34,7 +36,55 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "pnpm db:push && tsx server/index.ts"
+    command: sh -c "pnpm db:push && pnpm exec tsx watch server/index.ts"
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui.dev
+    working_dir: /app/ui
+    volumes:
+      - .:/app
+      # Preserve the UI's own node_modules, separate from the root node_modules.
+      - /app/ui/node_modules
+    environment:
+      # Used server-side by Next.js rewrites to proxy /trpc to the agent.
+      - BACKEND_URL=http://agent:3000
+      # Enable webpack polling for file watching via Docker Desktop's virtiofs share.
+      - WATCHPACK_POLLING=true
+    ports:
+      - "3001:3000"
+    depends_on:
+      - agent
+    command: pnpm dev
+
+  drizzle-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - DATABASE_URL=postgresql://postgres:secret@postgres:5432/corsair
+    env_file:
+      - .env
+    ports:
+      - "4983:4983"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: pnpm exec drizzle-kit studio
+
+  # Exposes the agent server to the internet via a Cloudflare quick tunnel.
+  # The public URL is printed in the logs on startup — use it for webhooks.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://agent:3000
+    depends_on:
+      - agent
+    restart: unless-stopped
 
 volumes:
   pgdata:
