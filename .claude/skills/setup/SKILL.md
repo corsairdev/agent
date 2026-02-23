@@ -28,7 +28,7 @@ description: Run initial Corsair setup. Use when a user wants to install, config
 
 Run all steps automatically. Pause only when the user must take a manual action (entering a key, making a choice). When something is broken or missing, fix it yourself. Only ask the user when you genuinely need their input.
 
-**Principle:** Do the exciting stuff first. Get their agent running and talking on WhatsApp before asking for any plugin keys. Each plugin key is an unlock — present them that way.
+**Principle:** Do the exciting stuff first. Get their agent running and talking on messaging apps before asking for any plugin keys. Each plugin key is an unlock — present them that way.
 
 ---
 
@@ -159,13 +159,20 @@ Note their selection. Then update `server/corsair.ts`:
 
 ---
 
-## Phase 3: WhatsApp
+## Phase 3: Choose your messaging channel
 
 Tell the user:
 
-> "Now let's get your agent live on WhatsApp. Once this is done, you'll be able to message it directly. The plugin keys can wait — let's get you something working first."
+> "Now let's get your agent live on a messaging app. Once this is done, you'll be able to message it directly. The plugin keys can wait — let's get you something working first.
+>
+> **Which would you prefer?**
+> - **WhatsApp** — Connect a WhatsApp number (your own or a dedicated one). Uses a pairing code, no phone to buy.
+> - **Telegram** — Create a Telegram bot via BotFather (just a token, no phone number needed). Easier to set up."
 
-Start the `/add-whatsapp` skill now. Return here when it's complete.
+Wait for their answer, then:
+
+- **WhatsApp**: Start the `/add-whatsapp` skill now. Return here when it's complete.
+- **Telegram**: Start the `/add-telegram` skill now. Return here when it's complete.
 
 ---
 
@@ -218,6 +225,7 @@ docker compose logs --tail=30 agent
 Check for:
 - All services status: `running`
 - `[whatsapp] Connected to WhatsApp` — if WhatsApp was set up
+- `[telegram] Bot started (long polling)` — if Telegram was set up
 - No plugin errors or crashes
 
 Get the cloudflared URL and share it with the user:
@@ -225,7 +233,7 @@ Get the cloudflared URL and share it with the user:
 docker compose logs cloudflared 2>&1 | grep -o 'https://[^ ]*\.trycloudflare\.com'
 ```
 
-Tell the user to send a test message on WhatsApp and confirm the agent responds. Let them know the web UI is at http://localhost:3001 and Drizzle Studio at http://localhost:4983.
+Tell the user to send a test message on their chosen channel and confirm the agent responds. Let them know the web UI is at http://localhost:3001 and Drizzle Studio at http://localhost:4983.
 
 Congratulate them — their agent is live.
 
@@ -258,6 +266,8 @@ docker compose up --build -d        # rebuild after package.json changes
 **Plugin throws key error:** Make sure the plugin's env var is in `.env` and is being passed to the plugin function in `server/corsair.ts`. Then `docker compose restart agent`.
 
 **WhatsApp not responding:** See the `/add-whatsapp` skill's troubleshooting section.
+
+**Telegram not responding:** See the `/add-telegram` skill's troubleshooting section.
 
 **Added a new npm package:** Run `docker compose up --build -d` to rebuild the image with the new dependency.
 
