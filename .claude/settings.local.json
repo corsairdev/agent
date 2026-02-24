@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker --version && pnpm --version)",
+      "Bash(pnpm install 2>&1 | tail -5)",
+      "Bash(docker compose stop agent && docker compose rm -f agent && docker compose up -d agent 2>&1)",
+      "Bash(docker compose up -d agent 2>&1)",
+      "Bash(docker compose exec agent pnpm tsx scripts/setup-slack.ts 2>&1)",
+      "Bash(docker compose exec agent pnpm tsx scripts/setup-linear.ts 2>&1)"
+    ]
+  }
+}

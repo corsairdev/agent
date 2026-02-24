@@ -10,6 +10,7 @@ import { corsair } from './corsair';
 import {
 	db,
 	permissions,
+	telegramMessages,
 	threadMessages,
 	threads,
 	whatsappMessages,
@@ -24,6 +25,7 @@ import {
 	updateWorkflowNextRun,
 } from './executor';
 import { appRouter } from './trpc/router';
+import { startTelegram } from './telegram/index';
 import { startWhatsApp } from './whatsapp/index';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -334,18 +336,35 @@ async function main() {
 					answer,
 				);
 
-				if (thread?.source === 'whatsapp' && thread.jid) {
-					// Insert a synthetic WhatsApp message so the poller picks it up
-					await db.insert(whatsappMessages).values({
-						jid: thread.jid,
-						senderJid: 'system',
-						senderName: 'Permission System',
-						content: answer,
-						sentAt: new Date(),
-						isGroup: false,
-						isBot: false,
-						processed: false,
-					});
+				if (
+					(thread?.source === 'whatsapp' || thread?.source === 'telegram') &&
+					thread.jid
+				) {
+					if (thread.source === 'whatsapp') {
+						// Insert a synthetic WhatsApp message so the poller picks it up
+						await db.insert(whatsappMessages).values({
+							jid: thread.jid,
+							senderJid: 'system',
+							senderName: 'Permission System',
+							content: answer,
+							sentAt: new Date(),
+							isGroup: false,
+							isBot: false,
+							processed: false,
+						});
+					} else {
+						// Insert a synthetic Telegram message so the poller picks it up
+						const chatId = thread.jid.replace(/^tg:/, '');
+						await db.insert(telegramMessages).values({
+							chatId,
+							senderId: 'system',
+							senderName: 'Permission System',
+							content: answer,
+							sentAt: new Date(),
+							isGroup: false,
+							processed: false,
+						});
+					}
 				} else {
 					// Web thread: resume agent and save result to the thread
 					runAgent(resumeMessages)
@@ -484,6 +503,13 @@ async function main() {
 		console.log('[server] Starting WhatsApp listener...');
 		startWhatsApp().catch((err) => {
 			console.error('[server] WhatsApp startup failed:', err);
+		});
+	}
+
+	if (process.env.TELEGRAM_ENABLED === 'true') {
+		console.log('[server] Starting Telegram listener...');
+		startTelegram().catch((err) => {
+			console.error('[server] Telegram startup failed:', err);
 		});
 	}
 }

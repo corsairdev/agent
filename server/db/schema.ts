@@ -119,10 +119,10 @@ export const threads = pgTable('threads', {
 	/** Auto-generated title (first user message, truncated) or null */
 	title: text('title'),
 	/** Source channel */
-	source: text('source', { enum: ['web', 'whatsapp'] })
+	source: text('source', { enum: ['web', 'whatsapp', 'telegram'] })
 		.notNull()
 		.default('web'),
-	/** WhatsApp chat JID — null for web threads */
+	/** WhatsApp/Telegram chat JID — null for web threads */
 	jid: text('jid'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -182,6 +182,34 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
 
 export const whatsappChats = pgTable('whatsapp_chats', {
 	jid: text('jid').primaryKey(),
+	name: text('name'),
+	type: text('type', { enum: ['dm', 'group'] }).notNull(),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ── Telegram tables ────────────────────────────────────────────────────────────
+
+export const telegramMessages = pgTable('telegram_messages', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	/** Numeric Telegram chat ID */
+	chatId: text('chat_id').notNull(),
+	/** Numeric sender ID */
+	senderId: text('sender_id').notNull(),
+	/** Display name of the sender */
+	senderName: text('sender_name'),
+	content: text('content').notNull(),
+	/** When Telegram says the message was sent */
+	sentAt: timestamp('sent_at').notNull(),
+	/** True if this is a group or supergroup chat */
+	isGroup: boolean('is_group').notNull().default(false),
+	/** False = not yet handled by the agent poller */
+	processed: boolean('processed').notNull().default(false),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+export const telegramChats = pgTable('telegram_chats', {
+	chatId: text('chat_id').primaryKey(),
 	name: text('name'),
 	type: text('type', { enum: ['dm', 'group'] }).notNull(),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
