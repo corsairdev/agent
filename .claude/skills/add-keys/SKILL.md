@@ -7,22 +7,38 @@ description: Explains Corsair's key management model. Read this before running a
 
 ## Credentials
 
-**Never ask the user to paste a credential into chat.** Instead:
+When you need a credential from the user, give them these three options and let them choose:
 
-1. Run `pwd` to get the absolute project path — call it `$DIR`.
-2. Tell the user to run this command, with a clear placeholder showing exactly what to replace:
-   ```bash
-   echo 'SOME_API_KEY=YOUR_KEY_HERE' >> $DIR/.env
-   ```
-3. In any setup script you write, read the value from `process.env` — never hardcode it:
-   ```typescript
-   const API_KEY = process.env.SOME_API_KEY!;
-   ```
-4. After the script runs successfully, delete each temp line from `.env` yourself. The `sed` command **must always include the absolute path to the file** — never run it without it:
-   ```bash
-   sed -i '' '/^SOME_API_KEY=/d' $DIR/.env
-   ```
-   Run one `sed` command per env var you added.
+**Option 1 — Paste into chat**
+They can just paste the value directly into the conversation. Use it inline in the script. This is fine if they don't mind sharing it in the chat window.
+
+**Option 2 — Run a shell command**
+Run `pwd` to get the absolute project path — call it `$DIR`. Then show them:
+```bash
+echo 'SOME_API_KEY=YOUR_KEY_HERE' >> $DIR/.env
+```
+In the setup script, read from `process.env`:
+```typescript
+const API_KEY = process.env.SOME_API_KEY!;
+```
+After the script runs, delete the temp line from `.env`. The `sed` command **must always include the absolute path to the file**:
+```bash
+sed -i '' '/^SOME_API_KEY=/d' $DIR/.env
+```
+Run one `sed` command per env var added.
+
+**Option 3 — Edit `.env` directly**
+Run `pwd` to get the absolute project path and output the full path to the `.env` file so the user can ⌘-click it to open in their editor:
+```
+/absolute/path/to/project/.env
+```
+Tell them to add the following line and save:
+```
+SOME_API_KEY=YOUR_KEY_HERE
+```
+Then the script reads it from `process.env` the same way as Option 2, and you clean it up with `sed` afterward.
+
+Note: If you're asking for a webhook signature for an integration, log the webhook URL so the user can reference it when setting up the webhook. The webhook URL is stored in .env as WEBHOOK_URL.
 
 ---
 

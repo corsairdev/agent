@@ -24,8 +24,8 @@ import {
 	updateExecution,
 	updateWorkflowNextRun,
 } from './executor';
-import { appRouter } from './trpc/router';
 import { startTelegram } from './telegram/index';
+import { appRouter } from './trpc/router';
 import { startWhatsApp } from './whatsapp/index';
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -35,11 +35,13 @@ export function searchCodeExamples(
 		console.log(
 			`[search] Found ${pluginMatches.length} plugin matches, returning up to ${limit}`,
 		);
-		return pluginMatches.slice(0, limit).map(({ plugin, description, code }) => ({
-			plugin,
-			description,
-			code,
-		}));
+		return pluginMatches
+			.slice(0, limit)
+			.map(({ plugin, description, code }) => ({
+				plugin,
+				description,
+				code,
+			}));
 	}
 
 	// Fall back to description keyword search

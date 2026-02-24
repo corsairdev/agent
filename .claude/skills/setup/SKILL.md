@@ -121,6 +121,12 @@ until docker info &>/dev/null 2>&1; do sleep 2; done
 docker compose logs cloudflared 2>&1 | grep -o 'https://[^ ]*\.trycloudflare\.com'
 ```
 
+Log the cloudflare URL so the user can see it. 
+
+Save the URL to BASE_PERMISSION_URL and WEBHOOK_URL in the .env file. Since it is a tunnel, we use it for both.
+
+The WEBHOOK_URL is the BASE_PERMISSION_URL + '/api/webhook'
+
 This URL is how external services (WhatsApp, Slack, etc.) reach the agent. It changes on every restart unless you configure a named Cloudflare tunnel.
 
 To follow the agent logs:

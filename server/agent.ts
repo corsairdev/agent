@@ -446,8 +446,7 @@ const agentTools = {
 				})
 				.returning({ id: permissions.id });
 
-			const baseUrl =
-				process.env.NEXT_PUBLIC_UI_URL ?? 'http://localhost:3000';
+			const baseUrl = process.env.BASE_PERMISSION_URL; // WEBHOOK URL
 			const approvalUrl = `${baseUrl}/permissions/${perm!.id}`;
 
 			return {
@@ -573,15 +572,12 @@ export async function runAgent(
 		);
 		if (askCall) {
 			// Check if ask_human was preceded by a request_permission call
-			const allResults = result.steps.flatMap(
-				(s) => s.staticToolResults,
-			);
+			const allResults = result.steps.flatMap((s) => s.staticToolResults);
 			const permResult = allResults
 				.slice()
 				.reverse()
 				.find(
-					(r: { toolName: string }) =>
-						r.toolName === 'request_permission',
+					(r: { toolName: string }) => r.toolName === 'request_permission',
 				) as { output: Record<string, unknown> } | undefined;
 
 			return {
@@ -590,9 +586,7 @@ export async function runAgent(
 				pendingMessages: [...messages, ...result.response.messages],
 				toolCallId: askCall.toolCallId,
 				toolName: askCall.toolName,
-				permissionId: permResult?.output?.permissionId as
-					| string
-					| undefined,
+				permissionId: permResult?.output?.permissionId as string | undefined,
 			};
 		}
 	}

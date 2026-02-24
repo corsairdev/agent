@@ -394,57 +394,57 @@ export default function PermissionPage() {
 					})}
 				</p>
 
-			{/* Actions */}
-			{isPending && (
-				<div
-					style={{
-						display: 'flex',
-						gap: 10,
-						justifyContent: 'flex-end',
-					}}
-				>
-					<button
-						className="btn-ghost"
-						disabled={resolveState === 'loading'}
-						onClick={() => resolve('decline')}
+				{/* Actions */}
+				{isPending && (
+					<div
 						style={{
-							padding: '10px 24px',
-							fontSize: 14,
-							fontWeight: 600,
+							display: 'flex',
+							gap: 10,
+							justifyContent: 'flex-end',
 						}}
 					>
-						Decline
-					</button>
-					<button
-						className="btn-primary"
-						disabled={resolveState === 'loading'}
-						onClick={() => resolve('approve')}
-						style={{
-							padding: '10px 24px',
-							fontSize: 14,
-							fontWeight: 600,
-							background: 'var(--success)',
-						}}
-					>
-						{resolveState === 'loading' ? 'Processing...' : 'Approve'}
-					</button>
-				</div>
-			)}
+						<button
+							className="btn-ghost"
+							disabled={resolveState === 'loading'}
+							onClick={() => resolve('decline')}
+							style={{
+								padding: '10px 24px',
+								fontSize: 14,
+								fontWeight: 600,
+							}}
+						>
+							Decline
+						</button>
+						<button
+							className="btn-primary"
+							disabled={resolveState === 'loading'}
+							onClick={() => resolve('approve')}
+							style={{
+								padding: '10px 24px',
+								fontSize: 14,
+								fontWeight: 600,
+								background: 'var(--success)',
+							}}
+						>
+							{resolveState === 'loading' ? 'Processing...' : 'Approve'}
+						</button>
+					</div>
+				)}
 
-			{resolveState === 'done' && (
-				<div style={{ textAlign: 'center', marginTop: 8 }}>
-					<a
-						href="/"
-						style={{
-							color: 'var(--accent)',
-							fontSize: 13,
-							textDecoration: 'none',
-						}}
-					>
-						Back to chat
-					</a>
-				</div>
-			)}
+				{resolveState === 'done' && (
+					<div style={{ textAlign: 'center', marginTop: 8 }}>
+						<a
+							href="/"
+							style={{
+								color: 'var(--accent)',
+								fontSize: 13,
+								textDecoration: 'none',
+							}}
+						>
+							Back to chat
+						</a>
+					</div>
+				)}
 			</div>
 		</div>
 	);

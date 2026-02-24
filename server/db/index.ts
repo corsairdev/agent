@@ -13,7 +13,7 @@ config({ path: '.env' });
 
 const connectionString =
 	process.env.DATABASE_URL ??
-	'postgres://postgres:secret@localhost:5433/corsair';
+	'postgres://postgres:secret@localhost:5432/corsair';
 
 export const pool: Pool = new Pool({
 	connectionString,
