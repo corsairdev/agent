@@ -22,9 +22,9 @@ services:
     working_dir: /app
     volumes:
       - .:/app
-      # Preserve the container's own node_modules (built during `docker compose build`).
-      # Prevents the host directory from shadowing native modules compiled for Linux.
-      - /app/node_modules
+      # Named volume so node_modules can be explicitly cleared on rebuild.
+      # Anonymous volumes persist across rebuilds and silently shadow new image layers.
+      - agent_node_modules:/app/node_modules
     environment:
       - DATABASE_URL=postgresql://postgres:secret@postgres:5432/corsair
       # Enable polling so tsx watch detects changes via Docker Desktop's virtiofs share.
@@ -45,8 +45,8 @@ services:
     working_dir: /app/ui
     volumes:
       - .:/app
-      # Preserve the UI's own node_modules, separate from the root node_modules.
-      - /app/ui/node_modules
+      # Named volume so node_modules can be explicitly cleared on rebuild.
+      - ui_node_modules:/app/ui/node_modules
     environment:
       # Used server-side by Next.js rewrites to proxy /trpc to the agent.
       - BACKEND_URL=http://agent:3000
@@ -65,7 +65,7 @@ services:
     working_dir: /app
     volumes:
       - .:/app
-      - /app/node_modules
+      - agent_node_modules:/app/node_modules
     environment:
       - DATABASE_URL=postgresql://postgres:secret@postgres:5432/corsair
     env_file:
@@ -88,3 +88,5 @@ services:
 
 volumes:
   pgdata:
+  agent_node_modules:
+  ui_node_modules:

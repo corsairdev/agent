@@ -25,23 +25,9 @@ docker compose up -d
 
 ---
 
-## 2. Install grammy
+## 2. Create the Telegram bot (BotFather)
 
-grammy is the Telegram Bot API library. Install it inside the Docker image by adding it to `package.json` (the container manages its own `node_modules`):
-
-```bash
-docker compose exec agent pnpm add grammy
-```
-
-After adding, rebuild so the new dependency is baked in:
-
-```bash
-docker compose up --build -d agent
-```
-
----
-
-## 3. Create the Telegram bot (BotFather)
+> `grammy` ships pre-installed in Corsair's Docker image — no package installation step needed.
 
 If the user doesn't already have a bot token, tell them:
 
@@ -713,8 +699,15 @@ Telegram message received
 **`TELEGRAM_BOT_TOKEN is not set` error:**
 - Run `docker compose up -d agent` (not `docker compose restart`) to pick up new `.env` values
 
-**`grammy` not found:**
-- Run `docker compose up --build -d agent` to rebuild the image with the new dependency
+**`grammy` not found / module resolution error:**
+- grammy is pre-installed in the image. If you're seeing this, the named volume may contain a stale `node_modules` from before grammy was added. Clear it and rebuild:
+  ```bash
+  docker compose down && docker volume rm corsair-2_agent_node_modules && docker compose up --build -d
+  ```
+  (Adjust the volume name prefix if your project directory has a different name — check with `docker volume ls`.)
+
+**`ERR_PNPM_UNEXPECTED_STORE` or similar pnpm errors:**
+- Never run `pnpm add` inside a running container — the pnpm store paths conflict. Always edit `package.json` and do the volume-rm + rebuild sequence above.
 
 **Verify bot token:**
 ```bash

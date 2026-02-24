@@ -128,14 +128,6 @@ To follow the agent logs:
 docker compose logs -f agent
 ```
 
-### 1g. Seed code context
-
-Once the containers are up and healthy, run:
-
-```bash
-docker compose exec agent pnpm run seed:code
-```
-
 This seeds the agent's code context into the database so it can reason about its own codebase. Wait for it to complete before moving on.
 
 ---
@@ -269,6 +261,10 @@ docker compose up --build -d        # rebuild after package.json changes
 
 **Telegram not responding:** See the `/add-telegram` skill's troubleshooting section.
 
-**Added a new npm package:** Run `docker compose up --build -d` to rebuild the image with the new dependency.
+**Added a new npm package:** Edit `package.json` directly (never `pnpm add` inside a running container — pnpm store paths conflict). Then clear the named volume and rebuild:
+```bash
+docker compose down && docker volume rm corsair-2_agent_node_modules && docker compose up --build -d
+```
+(Adjust the volume name prefix to match your project directory — check with `docker volume ls`.)
 
 **Want to add a plugin later:** Come back and run setup again, or run the `/add-plugin` skill directly.

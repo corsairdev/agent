@@ -231,12 +231,6 @@ main().catch(console.error);`,
 
 The API call pattern is always: `corsair.<pluginId>.api.<endpointGroup>.<method>(input)`
 
-After adding examples, regenerate the seed embeddings:
-
-```bash
-npm run seed:code
-```
-
 ## Key Rules
 
 - **All plugin code lives in a single file** (`server/plugins/<name>.ts`). No subdirectories.

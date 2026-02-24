@@ -177,5 +177,4 @@ Next steps:
   4. Import and add the plugin to server/corsair.ts:
        import { ${lowerName} } from './plugins/${lowerName}';
        plugins: [..., ${lowerName}({ key: process.env.${pluginName.toUpperCase()}_API_KEY! })]
-  5. Add seed examples to server/seed/examples.ts, then run: npm run seed:code
 `);
