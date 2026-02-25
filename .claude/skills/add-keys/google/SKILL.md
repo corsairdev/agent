@@ -11,7 +11,7 @@ Auth type: **`oauth_2`**
 - Integration level: `client_id`, `client_secret`, `redirect_url` (your Google OAuth app — shared)
 - Account level: `access_token`, `refresh_token` (the user's grant — per-tenant)
 
-Google Calendar and Google Drive share the same OAuth app. Set up credentials once and the script wires both plugins. Tell the user upfront: "Google takes more steps than the others, but it's a one-time setup."
+Google Calendar and Google Drive share the same OAuth app (same client_id/client_secret), but they are **separate plugins** with separate token stores and separate OAuth flows. Set up only the plugin the user asked for. Tell the user upfront: "Google takes more steps than the others, but it's a one-time setup."
 
 ---
 
@@ -53,7 +53,11 @@ Go to **APIs & Services → Credentials → Create Credentials → OAuth client 
 
 ## 5. Write and run the setup script
 
-Ask the user to provide Client ID and Client Secret. Then write `scripts/setup-google.ts`:
+Ask the user to provide Client ID and Client Secret. Determine which plugin to set up based on what the user asked for:
+- Google Calendar → `PLUGIN = 'googlecalendar'`
+- Google Drive → `PLUGIN = 'googledrive'`
+
+Then write `scripts/setup-google.ts`:
 
 ```typescript
 import 'dotenv/config';
@@ -70,28 +74,28 @@ const CLIENT_ID = '...';
 const CLIENT_SECRET = '...';
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Which Google plugins to set up (remove any you don't want)
-const PLUGINS = ['googlecalendar', 'googledrive'] as const;
+// Set to 'googlecalendar' or 'googledrive' depending on what the user asked for
+const PLUGIN = 'googledrive';
 
-async function setupPlugin(plugin: string) {
-  console.log(`\nSetting up ${plugin}...`);
+async function main() {
+  console.log(`\nSetting up ${PLUGIN}...`);
 
   // 1. Ensure integration row exists
   let [integration] = await db
     .select()
     .from(corsairIntegrations)
-    .where(eq(corsairIntegrations.name, plugin));
+    .where(eq(corsairIntegrations.name, PLUGIN));
 
   if (!integration) {
     [integration] = await db
       .insert(corsairIntegrations)
-      .values({ id: crypto.randomUUID(), name: plugin })
+      .values({ id: crypto.randomUUID(), name: PLUGIN })
       .returning();
     console.log(`  ✓ Created integration`);
   }
 
   // 2. Issue integration DEK and set OAuth app credentials
-  const integrationKeys = corsair.keys[plugin]!;
+  const integrationKeys = (corsair.keys as any)[PLUGIN]!;
 
   await integrationKeys.issue_new_dek();
   await integrationKeys.set_client_id(CLIENT_ID);
@@ -120,17 +124,16 @@ async function setupPlugin(plugin: string) {
   }
 
   // 4. Issue account DEK (tokens come from OAuth flow)
-  const accountKeys = corsair[plugin]!.keys;
+  const accountKeys = (corsair as any)[PLUGIN]!.keys;
 
   await accountKeys.issue_new_dek();
   console.log(`  ✓ Account DEK ready`);
-}
 
-async function main() {
-  for (const plugin of PLUGINS) {
-    await setupPlugin(plugin);
-  }
-  console.log('\n✓ Credentials stored. Now complete OAuth at http://localhost:3000/oauth/google');
+  // 5. Print the correct OAuth URL for this plugin
+  const oauthUrl = PLUGIN === 'googledrive'
+    ? 'http://localhost:3000/oauth/googledrive'
+    : 'http://localhost:3000/oauth/google';
+  console.log(`\n✓ Credentials stored. Now complete OAuth at ${oauthUrl}`);
   process.exit(0);
 }
 
@@ -153,13 +156,18 @@ rm scripts/setup-google.ts
 
 ## 6. Complete the OAuth flow
 
-Tell the user to open **http://localhost:3000/oauth/google** in their browser.
+Tell the user to open the correct URL for the plugin they set up:
+
+| Plugin | OAuth URL |
+|--------|-----------|
+| Google Calendar | http://localhost:3000/oauth/google |
+| Google Drive | http://localhost:3000/oauth/googledrive |
 
 This will:
 1. Redirect them to Google's consent screen
 2. After they click Allow, redirect back to `/oauth/callback`
-3. Automatically exchange the code for tokens and store both `access_token` and `refresh_token`
-4. Show a success page
+3. Automatically exchange the code for tokens and store both `access_token` and `refresh_token` for the correct plugin
+4. Show a success page naming the correct plugin
 
 No copying tokens manually — the server handles everything.
 
