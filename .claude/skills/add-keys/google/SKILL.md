@@ -51,7 +51,33 @@ Go to **APIs & Services → Credentials → Create Credentials → OAuth client 
 
 ---
 
-## 5. Write and run the setup script
+## 5. Register the plugin in server/corsair.ts
+
+**Before running the setup script**, check that the plugin is registered in `server/corsair.ts`. Read the file and verify the plugin is imported and included in the `plugins` array.
+
+For Google Calendar, it should look like:
+```typescript
+import { createCorsair, googlecalendar, slack } from 'corsair';
+export const corsair = createCorsair({
+  plugins: [slack(), googlecalendar()],
+  ...
+});
+```
+
+For Google Drive:
+```typescript
+import { createCorsair, googledrive, slack } from 'corsair';
+export const corsair = createCorsair({
+  plugins: [slack(), googledrive()],
+  ...
+});
+```
+
+If the plugin is missing, add it now. The container will pick up the change automatically (via hot reload) — no restart needed.
+
+---
+
+## 6. Write and run the setup script
 
 Ask the user to provide Client ID and Client Secret. Determine which plugin to set up based on what the user asked for:
 - Google Calendar → `PLUGIN = 'googlecalendar'`
@@ -154,7 +180,7 @@ rm scripts/setup-google.ts
 
 ---
 
-## 6. Complete the OAuth flow
+## 7. Complete the OAuth flow
 
 Tell the user to open the correct URL for the plugin they set up:
 
