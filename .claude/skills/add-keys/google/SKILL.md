@@ -9,7 +9,7 @@ Read `/add-keys` first if you haven't — it explains the key model.
 
 Auth type: **`oauth_2`**
 - Integration level: `client_id`, `client_secret`, `redirect_url` (your Google OAuth app — shared)
-- Account level: `refresh_token` (the user's grant — per-tenant)
+- Account level: `access_token`, `refresh_token` (the user's grant — per-tenant)
 
 Google Calendar and Google Drive share the same OAuth app. Set up credentials once and the script wires both plugins. Tell the user upfront: "Google takes more steps than the others, but it's a one-time setup."
 
@@ -51,26 +51,9 @@ Go to **APIs & Services → Credentials → Create Credentials → OAuth client 
 
 ---
 
-## 5. Get a refresh token via OAuth Playground
+## 5. Write and run the setup script
 
-1. Go to https://developers.google.com/oauthplayground
-2. Click the gear icon (⚙) → check **Use your own OAuth credentials** → paste Client ID and Client Secret
-3. In Step 1, select the scopes needed:
-   - Google Calendar: `https://www.googleapis.com/auth/calendar`
-   - Google Drive: `https://www.googleapis.com/auth/drive`
-4. Click **Authorize APIs** → sign in with the test user account → Allow
-5. In **Step 2**, click **Exchange authorization code for tokens**
-6. Copy the **refresh_token** from the response
-
-**Troubleshooting:**
-- "Access blocked" → confirm you added the signing-in Google account as a test user in step 3
-- Refresh token missing from response → in Step 1 of OAuth Playground, click **Revoke tokens** first, then re-authorize
-
----
-
-## 6. Write and run the setup script
-
-Ask the user to provide Client ID, Client Secret, and Refresh Token. Then write `scripts/setup-google.ts`:
+Ask the user to provide Client ID and Client Secret. Then write `scripts/setup-google.ts`:
 
 ```typescript
 import 'dotenv/config';
@@ -85,7 +68,6 @@ const REDIRECT_URL = 'http://localhost:3000/oauth/callback';
 // ── credentials (fill these in) ───────────────────────────────────────────────
 const CLIENT_ID = '...';
 const CLIENT_SECRET = '...';
-const REFRESH_TOKEN = '...';
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Which Google plugins to set up (remove any you don't want)
@@ -109,13 +91,7 @@ async function setupPlugin(plugin: string) {
   }
 
   // 2. Issue integration DEK and set OAuth app credentials
-  // (corsair.keys is typed per-plugin; access dynamically)
-  const integrationKeys = (corsair.keys as Record<string, {
-    issue_new_dek: () => Promise<void>;
-    set_client_id: (v: string) => Promise<void>;
-    set_client_secret: (v: string) => Promise<void>;
-    set_redirect_url: (v: string) => Promise<void>;
-  }>)[plugin]!;
+  const integrationKeys = corsair.keys[plugin]!;
 
   await integrationKeys.issue_new_dek();
   await integrationKeys.set_client_id(CLIENT_ID);
@@ -143,25 +119,18 @@ async function setupPlugin(plugin: string) {
     console.log(`  ✓ Created account`);
   }
 
-  // 4. Issue account DEK and store refresh token
-  const accountKeys = (corsair as Record<string, { keys: {
-    issue_new_dek: () => Promise<void>;
-    set_refresh_token: (v: string) => Promise<void>;
-    get_refresh_token: () => Promise<string | null>;
-  } }>)[plugin]!.keys;
+  // 4. Issue account DEK (tokens come from OAuth flow)
+  const accountKeys = corsair[plugin]!.keys;
 
   await accountKeys.issue_new_dek();
-  await accountKeys.set_refresh_token(REFRESH_TOKEN);
-
-  const stored = await accountKeys.get_refresh_token();
-  console.log(`  ✓ Refresh token stored (${stored?.slice(0, 10)}...)`);
+  console.log(`  ✓ Account DEK ready`);
 }
 
 async function main() {
   for (const plugin of PLUGINS) {
     await setupPlugin(plugin);
   }
-  console.log('\n✓ Google setup complete');
+  console.log('\n✓ Credentials stored. Now complete OAuth at http://localhost:3000/oauth/google');
   process.exit(0);
 }
 
@@ -182,8 +151,24 @@ rm scripts/setup-google.ts
 
 ---
 
+## 6. Complete the OAuth flow
+
+Tell the user to open **http://localhost:3000/oauth/google** in their browser.
+
+This will:
+1. Redirect them to Google's consent screen
+2. After they click Allow, redirect back to `/oauth/callback`
+3. Automatically exchange the code for tokens and store both `access_token` and `refresh_token`
+4. Show a success page
+
+No copying tokens manually — the server handles everything.
+
+---
+
 ## Notes
 
-**Token refresh:** The plugin's keyBuilder calls `getValidAccessToken()` internally, which uses the stored `refresh_token` + `client_id` + `client_secret` to get a fresh access token on every request. You don't need to store an access token manually.
+**Token refresh:** The plugin calls `getValidAccessToken()` internally on every request, using the stored `refresh_token` + `client_id` + `client_secret` to get a fresh access token. However, it also requires an `access_token` to be stored — the OAuth flow at step 6 stores both.
 
 **Token expiry (test mode):** Google OAuth refresh tokens for apps in test mode expire after 7 days of inactivity. To avoid this, publish the app: **OAuth consent screen → Publish App**. The unverified app warning during login is fine for personal use.
+
+**Re-authorizing:** If tokens expire or are revoked, just visit http://localhost:3000/oauth/google again.
