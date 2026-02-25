@@ -84,6 +84,8 @@ export const workflows = pgTable('workflows', {
 	triggerConfig: jsonb('trigger_config').notNull().default({}),
 	nextRunAt: timestamp('next_run_at'),
 	lastRunAt: timestamp('last_run_at'),
+	/** JID of the chat that created this workflow — used to send execution notifications */
+	notifyJid: text('notify_jid'),
 	status: text('status', { enum: ['active', 'paused', 'archived'] })
 		.notNull()
 		.default('active'),
@@ -237,6 +239,8 @@ export const permissions = pgTable('permissions', {
 		.default('pending'),
 	/** Links to thread_messages.id — the assistant message that triggered this permission request */
 	messageId: uuid('message_id'),
+	/** The chat JID (e.g. tg:12345) so the resolve handler knows where to re-trigger the agent */
+	jid: text('jid'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

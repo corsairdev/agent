@@ -1,10 +1,9 @@
 import 'dotenv/config';
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
-import type { ModelMessage, ToolModelMessage } from 'ai';
 import { processWebhook } from 'corsair';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import express from 'express';
-import cron from 'node-cron';
+import type { SimpleMessage } from './agent';
 import { runAgent, WORKFLOW_FAILURE_PROMPT } from './agent';
 import { corsair } from './corsair';
 import {
@@ -14,45 +13,21 @@ import {
 	threadMessages,
 	threads,
 	whatsappMessages,
-	workflows,
 } from './db';
 import {
 	createExecution,
 	executeWorkflow,
 	getWebhookWorkflows,
-	getWorkflowsToRun,
 	updateExecution,
-	updateWorkflowNextRun,
 } from './executor';
+import {
+	loadAllCronWorkflows,
+	setEscalationCallback,
+} from './workflow-scheduler';
+import { notifyJid } from './notifier';
 import { startTelegram } from './telegram/index';
 import { appRouter } from './trpc/router';
 import { startWhatsApp } from './whatsapp/index';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildResumeMessages(
-	storedMessages: ModelMessage[],
-	toolCallId: string,
-	toolName: string,
-	answer: string,
-) {
-	return [
-		...storedMessages,
-		{
-			role: 'tool',
-			content: [
-				{
-					type: 'tool-result',
-					toolCallId,
-					toolName,
-					output: { type: 'text', value: answer },
-				},
-			],
-		} satisfies ToolModelMessage,
-	];
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Workflow failure escalation
@@ -88,7 +63,9 @@ async function escalateWorkflowFailure(params: {
 
 	console.log(`[escalation] Escalating failure for workflow: ${workflowId}`);
 
-	runAgent([{ role: 'user', content: prompt }], {
+	runAgent(prompt, {
+		sessionId: workflowId,
+		history: [],
 		systemExtra: WORKFLOW_FAILURE_PROMPT,
 	}).catch((err) => {
 		console.error(
@@ -136,6 +113,12 @@ async function dispatchWebhookWorkflows(
 				console.log(
 					`[webhook] Workflow ${workflow.workflowId} executed successfully`,
 				);
+				if (workflow.notifyJid) {
+					notifyJid(
+						workflow.notifyJid,
+						`Workflow ran: "${workflow.name}".`,
+					).catch(() => {});
+				}
 			} else {
 				await updateExecution(execution.id, 'failed', undefined, result.error);
 				console.error(
@@ -483,11 +466,11 @@ async function main() {
 				.where(eq(threadMessages.id, perm.messageId))
 				.limit(1);
 
-			if (
-				msg?.pendingMessages &&
-				msg.pendingToolCallId &&
-				msg.pendingToolName
-			) {
+			console.log(
+				`[permissions] Found thread message: ${msg?.id}, pendingToolName=${msg?.pendingToolName}`,
+			);
+
+			if (msg?.pendingToolName === 'ask_human') {
 				// Determine source from the thread
 				const [thread] = await db
 					.select({ source: threads.source, jid: threads.jid })
@@ -495,13 +478,16 @@ async function main() {
 					.where(eq(threads.id, msg.threadId))
 					.limit(1);
 
+				console.log(
+					`[permissions] Thread source=${thread?.source}, jid=${thread?.jid}`,
+				);
+
 				if (
 					(thread?.source === 'whatsapp' || thread?.source === 'telegram') &&
 					thread.jid
 				) {
-					// For messaging sources, insert a synthetic message so the poller
-					// picks it up. Do NOT clear pending state here — the poller will find
-					// the pending assistant and build the proper resume context itself.
+					// For Telegram/WhatsApp, insert a synthetic message and let the
+					// poller resume the agent naturally via conversation history.
 					if (thread.source === 'whatsapp') {
 						await db.insert(whatsappMessages).values({
 							jid: thread.jid,
@@ -525,6 +511,9 @@ async function main() {
 							processed: false,
 						});
 					}
+					console.log(
+						`[permissions] Synthetic message inserted for ${thread.source}`,
+					);
 				} else {
 					// Web thread: clear pending state and resume agent directly
 					await db
@@ -536,24 +525,27 @@ async function main() {
 						})
 						.where(eq(threadMessages.id, msg.id));
 
-					const resumeMessages = buildResumeMessages(
-						msg.pendingMessages as ModelMessage[],
-						msg.pendingToolCallId,
-						msg.pendingToolName,
-						answer,
-					);
+					// Fetch history from DB (includes the ask_human question)
+					const historyRows = await db
+						.select()
+						.from(threadMessages)
+						.where(eq(threadMessages.threadId, msg.threadId))
+						.orderBy(asc(threadMessages.createdAt))
+						.limit(20);
 
-					runAgent(resumeMessages)
+					const history: SimpleMessage[] = historyRows.map((m) => ({
+						role: m.role as 'user' | 'assistant',
+						text: m.text || '',
+					}));
+
+					runAgent(answer, { sessionId: msg.threadId, history })
 						.then(async (output) => {
-							let text = '';
-							if (output.type === 'message') text = output.text;
-							else if (output.type === 'script')
-								text = output.message || output.output || '';
-							else if (output.type === 'workflow')
-								text =
-									output.message ||
-									`Workflow ${output.workflowId ?? ''} updated`;
-							else if (output.type === 'needs_input') text = output.question;
+							const text =
+								output.type === 'done'
+									? (output.messages.at(-1) ?? '')
+									: output.type === 'message'
+										? output.text
+										: output.question;
 
 							await db.insert(threadMessages).values({
 								threadId: msg.threadId,
@@ -570,6 +562,38 @@ async function main() {
 						});
 				}
 			}
+		} else if (perm.jid) {
+			// Agent paused via ask_human (or sent the URL inline) — resume by
+			// inserting a synthetic message into the originating chat so the poller
+			// re-runs the agent with the outcome.
+			const syntheticContent =
+				action === 'approve'
+					? `Permission has been granted for: ${perm.description}. You MUST proceed using these exact args (do not re-resolve or change any values, as approval is only valid for these exact args): ${JSON.stringify(perm.args)}`
+					: `Permission has been declined for: ${perm.description}. Please inform the user and stop.`;
+
+			if (perm.jid.startsWith('tg:')) {
+				const chatId = perm.jid.replace(/^tg:/, '');
+				await db.insert(telegramMessages).values({
+					chatId,
+					senderId: 'system',
+					senderName: 'Permission System',
+					content: syntheticContent,
+					sentAt: new Date(),
+					isGroup: false,
+					processed: false,
+				});
+			} else {
+				await db.insert(whatsappMessages).values({
+					jid: perm.jid,
+					senderJid: 'system',
+					senderName: 'Permission System',
+					content: syntheticContent,
+					sentAt: new Date(),
+					isGroup: false,
+					isBot: false,
+					processed: false,
+				});
+			}
 		}
 
 		return res.json({
@@ -582,91 +606,11 @@ async function main() {
 		});
 	});
 
-	// ── Cron scheduler (runs every minute) ────────────────────────────────────
-	cron.schedule('* * * * *', async () => {
-		try {
-			const workflowsToRun = await getWorkflowsToRun();
-
-			for (const workflow of workflowsToRun) {
-				console.log(`[cron] Executing workflow: ${workflow.workflowId}`);
-
-				const execution = await createExecution(workflow.id, 'cron', 'running');
-
-				if (!execution) continue;
-
-				try {
-					const result = await executeWorkflow(workflow.name, workflow.code);
-
-					if (result.success) {
-						await updateExecution(execution.id, 'success', {
-							output: result.output,
-						});
-						console.log(
-							`[cron] Workflow ${workflow.workflowId} executed successfully`,
-						);
-					} else {
-						await updateExecution(
-							execution.id,
-							'failed',
-							undefined,
-							result.error,
-						);
-						console.error(
-							`[cron] Workflow ${workflow.workflowId} failed:`,
-							result.error,
-						);
-						escalateWorkflowFailure({
-							workflowId: workflow.workflowId,
-							workflowName: workflow.name,
-							code: workflow.code,
-							triggerType: 'cron',
-							error: result.error ?? 'Unknown error',
-						});
-					}
-
-					const workflowRecord = await db
-						.select()
-						.from(workflows)
-						.where(eq(workflows.id, workflow.id))
-						.limit(1);
-
-					if (
-						workflowRecord[0]?.triggerConfig &&
-						typeof workflowRecord[0].triggerConfig === 'object'
-					) {
-						const triggerConfig = workflowRecord[0].triggerConfig as {
-							cron?: string;
-						};
-						if (triggerConfig.cron) {
-							await updateWorkflowNextRun(workflow.id, triggerConfig.cron);
-						}
-					}
-				} catch (error) {
-					const errorMessage =
-						error instanceof Error ? error.message : String(error);
-					await updateExecution(
-						execution.id,
-						'failed',
-						undefined,
-						errorMessage,
-					);
-					console.error(
-						`[cron] Error executing workflow ${workflow.workflowId}:`,
-						error,
-					);
-					escalateWorkflowFailure({
-						workflowId: workflow.workflowId,
-						workflowName: workflow.name,
-						code: workflow.code,
-						triggerType: 'cron',
-						error: errorMessage,
-					});
-				}
-			}
-		} catch (error) {
-			console.error('[cron] Error in cron scheduler:', error);
-		}
-	});
+	// ── Cron scheduler ────────────────────────────────────────────────────────
+	// Wire the escalation callback before loading workflows so failures are handled
+	// biome-ignore lint/nursery/noMisusedPromises: ignore for now
+	setEscalationCallback(escalateWorkflowFailure);
+	await loadAllCronWorkflows();
 
 	// ─────────────────────────────────────────────────────────────────────────
 	const PORT = Number(process.env.PORT ?? 3000);

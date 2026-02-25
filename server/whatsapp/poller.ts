@@ -1,5 +1,5 @@
-import type { ModelMessage, ToolModelMessage } from 'ai';
 import { asc, desc, eq } from 'drizzle-orm';
+import type { SimpleMessage } from '../agent';
 import { runAgent } from '../agent';
 import { db, threadMessages, threads, whatsappMessages } from '../db';
 
@@ -9,28 +9,6 @@ const POLL_INTERVAL_MS = 2000;
 function getBotMentionPattern(): RegExp {
 	const botName = process.env.BOT_NAME || 'corsair';
 	return new RegExp(`@${botName}`, 'i');
-}
-
-function buildResumeMessages(
-	storedMessages: ModelMessage[],
-	toolCallId: string,
-	toolName: string,
-	answer: string,
-): ModelMessage[] {
-	return [
-		...storedMessages,
-		{
-			role: 'tool',
-			content: [
-				{
-					type: 'tool-result',
-					toolCallId,
-					toolName,
-					output: { type: 'text', value: answer },
-				},
-			],
-		} satisfies ToolModelMessage,
-	];
 }
 
 /** Find or create a thread for a given WhatsApp JID. */
@@ -99,7 +77,7 @@ async function pollOnce(
 			text: msg.content,
 		});
 
-		// Check if the last assistant message has a pending (ask_human) state
+		// Fetch last 10 messages for history (includes the just-saved user message)
 		const recent = await db
 			.select()
 			.from(threadMessages)
@@ -107,25 +85,12 @@ async function pollOnce(
 			.orderBy(desc(threadMessages.createdAt))
 			.limit(10);
 
+		// Check if there's a pending ask_human state and clear it
 		const pendingAssistant = recent.find(
-			(m) => m.role === 'assistant' && m.pendingToolCallId,
+			(m) => m.role === 'assistant' && m.pendingToolName === 'ask_human',
 		);
 
-		let agentMessages: ModelMessage[];
-
-		if (
-			pendingAssistant?.pendingMessages &&
-			pendingAssistant.pendingToolCallId &&
-			pendingAssistant.pendingToolName
-		) {
-			// Resume the paused conversation with the user's answer
-			agentMessages = buildResumeMessages(
-				pendingAssistant.pendingMessages as ModelMessage[],
-				pendingAssistant.pendingToolCallId,
-				pendingAssistant.pendingToolName,
-				msg.content,
-			);
-			// Clear pending state
+		if (pendingAssistant) {
 			await db
 				.update(threadMessages)
 				.set({
@@ -134,90 +99,54 @@ async function pollOnce(
 					pendingToolName: null,
 				})
 				.where(eq(threadMessages.id, pendingAssistant.id));
-		} else {
-			// Build context from the last 5 messages in the thread (oldest-first)
-			const history = await db
-				.select()
-				.from(threadMessages)
-				.where(eq(threadMessages.threadId, threadId))
-				.orderBy(asc(threadMessages.createdAt))
-				.limit(5);
-
-			agentMessages = history.map((m) => ({
-				role: m.role as 'user' | 'assistant',
-				content: m.text || '',
-			}));
 		}
+
+		// Build history oldest-first, excluding the current user message (it's the prompt)
+		const historyRows = recent.slice(0, -1).reverse();
+		const history: SimpleMessage[] = historyRows.map((m) => ({
+			role: m.role as 'user' | 'assistant',
+			text: m.text || '',
+		}));
 
 		try {
 			await setTyping(msg.jid, true);
-			const output = await runAgent(agentMessages, { jid: msg.jid });
+			const output = await runAgent(msg.content, {
+				sessionId: threadId,
+				history,
+				jid: msg.jid,
+				onMessage: (text) => sendMessage(msg.jid, text),
+			});
 			await setTyping(msg.jid, false);
 
-			let replyText = '';
-
 			if (output.type === 'needs_input') {
-				replyText = output.question;
-
-				// Save the assistant message with pending resume state
-				const pendingMsgs: ModelMessage[] = [
-					...agentMessages,
-					...output.pendingMessages.slice(agentMessages.length),
-				];
-
+				const replyText = output.question;
 				await db.insert(threadMessages).values({
 					threadId,
 					role: 'assistant',
 					text: replyText,
-					pendingMessages: pendingMsgs,
-					pendingToolCallId: output.toolCallId,
-					pendingToolName: output.toolName,
+					pendingMessages: null,
+					pendingToolCallId: 'ask_human',
+					pendingToolName: 'ask_human',
 				});
-
-				// Link the permission to this thread if there was a request_permission call
-				if (output.permissionId) {
-					// Update permission to reference the thread's JID for WhatsApp resume
-					// (handled in index.ts permission resolve via thread.source === 'whatsapp')
-				}
-			} else if (output.type === 'message') {
-				replyText = output.text;
-				await db.insert(threadMessages).values({
-					threadId,
-					role: 'assistant',
-					text: replyText,
-				});
-			} else if (output.type === 'script') {
-				if (output.error) {
-					replyText = `Error: ${output.error}`;
-				} else if (output.message) {
-					replyText = output.message;
-				} else {
-					replyText = output.output?.trim() || 'Done.';
-				}
-				await db.insert(threadMessages).values({
-					threadId,
-					role: 'assistant',
-					text: replyText,
-				});
-			} else if (output.type === 'workflow') {
-				if (output.message) {
-					replyText = output.message;
-				} else if (output.cronSchedule) {
-					replyText = `Workflow scheduled: ${output.cronSchedule}`;
-				} else if (output.webhookTrigger) {
-					replyText = `Webhook workflow registered for ${output.webhookTrigger.plugin}.${output.webhookTrigger.action}`;
-				} else {
-					replyText = 'Workflow stored.';
-				}
-				await db.insert(threadMessages).values({
-					threadId,
-					role: 'assistant',
-					text: replyText,
-				});
-			}
-
-			if (replyText) {
 				await sendMessage(msg.jid, replyText);
+			} else if (output.type === 'done') {
+				// Messages were already sent inline; save the last one to DB for history
+				const lastMsg = output.messages.at(-1) ?? '';
+				if (lastMsg) {
+					await db.insert(threadMessages).values({
+						threadId,
+						role: 'assistant',
+						text: lastMsg,
+					});
+				}
+			} else {
+				const replyText = output.text;
+				await db.insert(threadMessages).values({
+					threadId,
+					role: 'assistant',
+					text: replyText,
+				});
+				if (replyText) await sendMessage(msg.jid, replyText);
 			}
 
 			// Update thread timestamp

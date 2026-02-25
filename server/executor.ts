@@ -3,54 +3,23 @@ import { and, eq, lte, ne } from 'drizzle-orm';
 import { unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { promisify } from 'util';
-import type { AgentResult } from './agent';
 import { db, workflowExecutions, workflows } from './db';
 
 const execAsync = promisify(exec);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Script execution (one-off tasks)
+// Workflow store input type
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function executeScript(
-	code: string,
-): Promise<{ success: boolean; output?: string; error?: string }> {
-	// Create a temporary TypeScript file
-	const tmpPath = join(process.cwd(), `.tmp-script-${Date.now()}.ts`);
-
-	// Wrap code with corsair import
-	// Temp files are in project root, corsair is in server/
-	const wrappedCode = `
-import { corsair } from './server/corsair';
-
-${code}
-`;
-
-	try {
-		writeFileSync(tmpPath, wrappedCode, 'utf8');
-
-		// Execute using tsx
-		const { stdout, stderr } = await execAsync(`npx tsx "${tmpPath}"`, {
-			cwd: process.cwd(),
-			env: { ...process.env },
-		});
-
-		const output = stdout || stderr || '';
-		return { success: true, output };
-	} catch (e: unknown) {
-		const err = e as { stdout?: string; stderr?: string; message?: string };
-		const error = [err.stdout, err.stderr, err.message]
-			.filter(Boolean)
-			.join('\n');
-		return { success: false, error };
-	} finally {
-		try {
-			unlinkSync(tmpPath);
-		} catch {
-			// ignore cleanup errors
-		}
-	}
-}
+type WorkflowStoreInput = {
+	type: 'workflow';
+	workflowId: string;
+	code: string;
+	description?: string;
+	cronSchedule?: string;
+	webhookTrigger?: { plugin: string; action: string };
+	notifyJid?: string;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Workflow execution
@@ -106,11 +75,9 @@ ${workflowId}().catch(console.error);
 // Store workflow in database
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function storeWorkflow(
-	result: AgentResult & { cronSchedule?: string },
-) {
-	if (result.type !== 'workflow' || !result.workflowId) {
-		throw new Error('Cannot store non-workflow result');
+export async function storeWorkflow(result: WorkflowStoreInput) {
+	if (!result.workflowId) {
+		throw new Error('Cannot store workflow without workflowId');
 	}
 
 	let triggerType: 'manual' | 'cron' | 'webhook' = 'manual';
@@ -138,6 +105,7 @@ export async function storeWorkflow(
 			triggerType,
 			triggerConfig,
 			nextRunAt,
+			notifyJid: result.notifyJid,
 			status: 'active',
 		})
 		.returning();
@@ -263,6 +231,7 @@ export async function getWebhookWorkflows(plugin: string, action: string) {
 			code: w.code,
 			workflowId: w.name,
 			name: w.name,
+			notifyJid: w.notifyJid ?? undefined,
 		}));
 }
 

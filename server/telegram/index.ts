@@ -1,4 +1,5 @@
 import { db, telegramChats, telegramMessages } from '../db';
+import { registerTelegramSender } from '../notifier';
 import type { InboundTelegramMessage } from './connection';
 import { TelegramConnection } from './connection';
 import { startPoller } from './poller';
@@ -52,6 +53,8 @@ export async function startTelegram(): Promise<() => Promise<void>> {
   }
 
   await connection.start();
+
+  registerTelegramSender((chatId, text) => connection.sendMessage(chatId, text));
 
   const stopPoller = startPoller(
     (chatId, text) => connection.sendMessage(chatId, text),

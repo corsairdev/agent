@@ -3,27 +3,25 @@ name: add-protections
 description: Set up endpoint permission guards for the Corsair agent. Use when the user wants to control which agent actions require manual approval, add safeguards, restrict endpoints, or configure protections.
 ---
 
-You are helping a user decide which Corsair agent actions should require manual approval before executing. This is a human-in-the-loop permission system — like 2FA for agent actions.
-
-## How it works
-
-When the agent calls a protected endpoint (e.g. `corsair.slack.api.messages.post()`), the before hook blocks execution and logs a `[PERMISSION_REQUIRED]` message. The agent then requests permission from the user via an approval page. The user reviews the action details (message content, recipients, etc.) and clicks Approve or Decline. Only then does the endpoint execute.
+You are helping a user add human-in-the-loop permission guards to Corsair agent actions. When a protected endpoint is called, execution is blocked until the user approves it via an approval page.
 
 Each permission is single-use: approved once, used once, then marked completed.
 
 ## Step 1: Ask what to protect
 
-Ask the user:
+Ask the user two things at once:
+1. Which agent actions should require approval?
+2. What information do they want to see on the approval page when reviewing each action?
 
-> What agent actions would you like to require approval for? Describe them in plain language — for example, "sending Slack messages", "creating Linear issues", "sending emails", "posting to Discord".
+For example: "Which actions should require approval, and what details would you like to see when approving them? For example, for a Slack message you might want to see the channel and message text; for a Linear issue you might want to see the title, description, and priority."
 
-Wait for the user's response.
+Wait for the user's response before continuing.
 
 ## Step 2: Map to endpoints
 
-Based on the user's response, find the actual Corsair endpoints to protect. Look at `server/corsair.ts` to see which plugins are active.
+Look at `server/corsair.ts` to see which plugins are active. For each action the user described, identify the matching endpoint path(s).
 
-For each action the user described, identify the matching endpoint path(s). Common mappings:
+Common mappings:
 
 | User says | Endpoint path |
 |-----------|--------------|
@@ -39,13 +37,13 @@ For each action the user described, identify the matching endpoint path(s). Comm
 | "uploading files" | `slack.files.upload` / `googledrive.files.upload` |
 | "creating GitHub PRs" | `github.pullRequests.create` |
 
-If unsure about an endpoint name, check the plugin source in the `corsair` package:
-- Look at the `*Nested` endpoint tree in the plugin's `index.ts`
-- The endpoint path is the dotted key path: `plugin.group.method`
+If unsure about an endpoint name, check the plugin's type definitions:
+- `node_modules/corsair/dist/plugins/<plugin>/index.d.ts`
+- Find the `*EndpointsNested` declaration — the dotted key path is the endpoint: e.g. `issues: { create }` → `linear.issues.create`
 
 ## Step 3: Update corsair.ts
 
-Open `server/corsair.ts` and write the `before` and `after` hooks **inline** for each protected endpoint. Do NOT use a generic helper — write each hook manually so it's fully typed by the SDK.
+Open `server/corsair.ts` and add `before` and `after` hooks inline for each protected endpoint.
 
 **Import the permission helpers** (if not already imported):
 
@@ -53,42 +51,31 @@ Open `server/corsair.ts` and write the `before` and `after` hooks **inline** for
 import { checkPermission, completePermission } from './permissions';
 ```
 
-**Add hooks to each plugin.** The hooks object mirrors the endpoint tree structure. Write the `before` and `after` hooks inline so TypeScript infers the correct parameter types from the plugin's endpoint definitions. For example, to protect `slack.messages.post` and `slack.channels.create`:
+**Hook anatomy** — every protected endpoint follows this exact pattern:
 
 ```typescript
-slack({
+somePlugin({
   hooks: {
-    messages: {
-      post: {
+    group: {
+      method: {
         async before(ctx, args) {
-          const granted = await checkPermission('slack.messages.post');
-          if (!granted) {
+          const permissionId = await checkPermission('plugin.group.method', args);
+          if (!permissionId) {
             console.log(
-              `[PERMISSION_REQUIRED] endpoint=slack.messages.post args=${JSON.stringify(args)} | This endpoint requires approval. Use the request_permission tool to request access.`,
+              `[PERMISSION_REQUIRED] endpoint=plugin.group.method args=${JSON.stringify(args)}
+
+              This endpoint requires approval.
+
+              <USER PREFERENCES: list the specific fields the user wants to see on the approval page, e.g. "The user wants to see the channel name and message text." Be explicit — the agent reading this log will use it to write the permission description.>
+
+              Use the request_permission tool to request access.`,
             );
             return { ctx, args, continue: false };
           }
-          return { ctx, args };
+          return { ctx, args, continue: true, passToAfter: permissionId };
         },
-        async after() {
-          await completePermission('slack.messages.post');
-        },
-      },
-    },
-    channels: {
-      create: {
-        async before(ctx, args) {
-          const granted = await checkPermission('slack.channels.create');
-          if (!granted) {
-            console.log(
-              `[PERMISSION_REQUIRED] endpoint=slack.channels.create args=${JSON.stringify(args)} | This endpoint requires approval. Use the request_permission tool to request access.`,
-            );
-            return { ctx, args, continue: false };
-          }
-          return { ctx, args };
-        },
-        async after() {
-          await completePermission('slack.channels.create');
+        async after(_, __, passToAfter) {
+          passToAfter && (await completePermission(passToAfter));
         },
       },
     },
@@ -96,7 +83,11 @@ slack({
 }),
 ```
 
-For Linear issues:
+### CRITICAL: The console.log message is the agent's only instruction
+
+The `[PERMISSION_REQUIRED]` log is what the agent reads when it calls `request_permission`. The `description` it writes for the approval page comes entirely from parsing this message. **You must embed the user's display preferences directly in the log string.** If the user said they want to see the title, description, and priority — write that explicitly in the log. If you don't, the agent will have no idea what to include and will write a generic description.
+
+Example for a Linear issue where the user wants title, description, and priority visible:
 
 ```typescript
 linear({
@@ -104,17 +95,23 @@ linear({
     issues: {
       create: {
         async before(ctx, args) {
-          const granted = await checkPermission('linear.issues.create');
-          if (!granted) {
+          const permissionId = await checkPermission('linear.issues.create', args);
+          if (!permissionId) {
             console.log(
-              `[PERMISSION_REQUIRED] endpoint=linear.issues.create args=${JSON.stringify(args)} | This endpoint requires approval. Use the request_permission tool to request access.`,
+              `[PERMISSION_REQUIRED] endpoint=linear.issues.create args=${JSON.stringify(args)}
+
+              This endpoint requires approval.
+
+              The user wants to see the issue title, description, and priority on the approval page.
+
+              Use the request_permission tool to request access.`,
             );
             return { ctx, args, continue: false };
           }
-          return { ctx, args };
+          return { ctx, args, continue: true, passToAfter: permissionId };
         },
-        async after() {
-          await completePermission('linear.issues.create');
+        async after(_, __, passToAfter) {
+          passToAfter && (await completePermission(passToAfter));
         },
       },
     },
@@ -122,32 +119,60 @@ linear({
 }),
 ```
 
-The hook path MUST match the endpoint tree structure from the plugin. The endpoint string passed to `checkPermission` / `completePermission` MUST be `<plugin>.<group>.<method>` — the exact dotted path.
+Example for Slack where the user wants channel and message text visible:
 
-## Step 4: Run the migration
+```typescript
+slack({
+  hooks: {
+    messages: {
+      post: {
+        async before(ctx, args) {
+          const permissionId = await checkPermission('slack.messages.post', args);
+          if (!permissionId) {
+            console.log(
+              `[PERMISSION_REQUIRED] endpoint=slack.messages.post args=${JSON.stringify(args)}
 
-The permissions table needs to exist in the database. Run:
+              This endpoint requires approval.
 
-```bash
-npm run db:generate
-npm run db:migrate
+              The user wants to see the channel and full message text on the approval page.
+
+              Use the request_permission tool to request access.`,
+            );
+            return { ctx, args, continue: false };
+          }
+          return { ctx, args, continue: true, passToAfter: permissionId };
+        },
+        async after(_, __, passToAfter) {
+          passToAfter && (await completePermission(passToAfter));
+        },
+      },
+    },
+  },
+}),
 ```
 
-## Step 5: Confirm
+### Hook mechanics (how it works)
+
+- **`checkPermission(endpoint, args)`** — queries the DB for a granted permission matching this exact endpoint + args JSON. Returns the permission ID if found, `null` if not.
+- **`continue: false`** — halts execution of the endpoint. The API call is never made.
+- **`passToAfter: permissionId`** — threads the permission ID from `before` to `after` via the runtime. The `after` hook receives it as its third argument.
+- **`after(_, __, passToAfter)`** — `_` is ctx, `__` is the API response. The third param is whatever was returned as `passToAfter` from `before`.
+- **`completePermission(id)`** — marks the permission as `completed` by ID so it can't be reused.
+
+### Hook structure rules
+
+- The hooks object mirrors the endpoint tree exactly: `hooks.group.method.before/after`
+- The endpoint string passed to `checkPermission` must be the full dotted path: `plugin.group.method`
+- Do NOT modify `server/permissions.ts` — it's a shared module
+- Do NOT protect `get`, `list`, `search`, or read-only endpoints — only writes
+- If a plugin already has hooks for other endpoints, add to them, don't replace
+
+## Step 4: Confirm
 
 Tell the user which endpoints are now protected and explain the flow:
 
-1. When the agent tries to call a protected endpoint, it will pause and send a permission request
-2. They'll receive a link to an approval page (via WhatsApp or the chat UI)
-3. The approval page shows the full details of the action (message content, recipients, etc.)
-4. They click Approve to continue or Decline to cancel
-5. The agent resumes automatically
-
-## Rules
-
-- **Only protect write operations** — reads/lists don't need approval. Never protect `get`, `list`, `search`, or `getHistory` endpoints.
-- **Write hooks inline** — do NOT use a generic helper function that returns `any`. Each hook must be written directly so TypeScript can type-check the `ctx`, `args`, and `res` parameters.
-- **The endpoint string must be exact** — `slack.messages.post`, not `slack.messages.Post` or `messages.post`.
-- **Don't remove existing hooks** — if a plugin already has hooks for other endpoints, add to them, don't replace.
-- **Don't modify `server/permissions.ts`** — it's a shared module, not per-plugin.
-- **Always run the migration** after adding the permissions table.
+1. When the agent tries to call a protected endpoint, it will pause and log `[PERMISSION_REQUIRED]`
+2. The agent calls `request_permission` and sends the user an approval URL
+3. The user opens the approval page, sees the action details, and clicks Approve or Decline
+4. If approved, the agent re-runs the action — this time `checkPermission` finds the granted record and proceeds
+5. After the endpoint executes, `completePermission` marks it used so it can't be replayed

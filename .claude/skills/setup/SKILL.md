@@ -99,7 +99,7 @@ This builds all images and starts the full stack:
 | Agent (server) | http://localhost:3000 | tRPC API + webhook receiver |
 | UI (Next.js) | http://localhost:3001 | Web chat interface |
 | Drizzle Studio | http://localhost:4983 | Database browser |
-| cloudflared | see logs | Public tunnel to the agent |
+| ngrok | http://localhost:4040 | Tunnel dashboard + public URL |
 
 The first build takes a couple of minutes. Subsequent starts are instant since Docker caches the dependency layers.
 
@@ -116,18 +116,32 @@ Then poll until it's actually up before retrying:
 until docker info &>/dev/null 2>&1; do sleep 2; done
 ```
 
-**Get the cloudflared public URL** (needed for webhooks):
+**Get the ngrok public URL** (needed for webhooks). ngrok runs as a Docker service and needs an authtoken. Tell the user to:
+1. Sign up at https://ngrok.com and copy their authtoken from the dashboard
+2. Add it to `.env` using the Credentials convention above:
+   ```bash
+   echo 'NGROK_AUTHTOKEN=YOUR_TOKEN_HERE' >> $DIR/.env
+   ```
+3. For a **stable URL that doesn't change on restart** (recommended), claim their free static domain at https://dashboard.ngrok.com/domains. Then edit the ngrok command directly in `docker-compose.yml`:
+   ```yaml
+   command: http --domain=your-domain.ngrok-free.app agent:3000
+   ```
+
+After `.env` is updated, restart the stack so ngrok picks up the token:
 ```bash
-docker compose logs cloudflared 2>&1 | grep -o 'https://[^ ]*\.trycloudflare\.com'
+docker compose up -d
 ```
 
-Log the cloudflare URL so the user can see it. 
+Get the public URL from the ngrok container:
+```bash
+curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"https://[^"]*"' | head -1 | cut -d'"' -f4
+```
 
-Save the URL to BASE_PERMISSION_URL and WEBHOOK_URL in the .env file. Since it is a tunnel, we use it for both.
+Save the URL to `BASE_PERMISSION_URL` and `WEBHOOK_URL` in the `.env` file. Since it is a tunnel, we use it for both.
 
-The WEBHOOK_URL is the BASE_PERMISSION_URL + '/api/webhook'
+The `WEBHOOK_URL` is the `BASE_PERMISSION_URL` + `/api/webhook`
 
-This URL is how external services (WhatsApp, Slack, etc.) reach the agent. It changes on every restart unless you configure a named Cloudflare tunnel.
+This URL is how external services (WhatsApp, Slack, etc.) reach the agent.
 
 To follow the agent logs:
 ```bash
@@ -203,11 +217,9 @@ This lets the user exit at any point and return later — each sub-skill can be 
 
 ## Phase 5: Custom integrations
 
-Ask the user:
+Tell the user:
 
-> "Are there any other tools or APIs you want your agent to be able to use? For example: Stripe, Notion, Airtable, GitHub, Twilio — anything at all."
-
-If yes, start the `/add-plugin` skill for each one. If no, continue.
+You can set up any other integration you want once the setup is done.
 
 ---
 
@@ -226,10 +238,7 @@ Check for:
 - `[telegram] Bot started (long polling)` — if Telegram was set up
 - No plugin errors or crashes
 
-Get the cloudflared URL and share it with the user:
-```bash
-docker compose logs cloudflared 2>&1 | grep -o 'https://[^ ]*\.trycloudflare\.com'
-```
+Confirm the ngrok tunnel is still running in its terminal and the URL in `.env` is up to date. If the user restarted ngrok and the URL changed (and they don't have a static domain), they'll need to update `BASE_PERMISSION_URL` and `WEBHOOK_URL` in `.env` and re-register any webhooks.
 
 Tell the user to send a test message on their chosen channel and confirm the agent responds. Let them know the web UI is at http://localhost:3001 and Drizzle Studio at http://localhost:4983.
 
@@ -239,11 +248,12 @@ Congratulate them — their agent is live.
 ```bash
 docker compose logs -f agent        # follow agent logs
 docker compose logs -f ui           # follow UI logs
-docker compose logs cloudflared     # get the public tunnel URL
 docker compose up -d agent          # restart agent and pick up .env changes
+docker compose up -d ngrok          # restart ngrok (e.g. after updating NGROK_AUTHTOKEN)
 docker compose down                 # stop everything
 docker compose up -d                # start everything again
 docker compose up --build -d        # rebuild after package.json changes
+curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"https://[^"]*"' | head -1 | cut -d'"' -f4  # get ngrok URL
 ```
 
 > **Note:** Use `docker compose up -d <service>` (not `restart`) whenever `.env` changes — `restart` preserves the old environment from container creation.
@@ -254,7 +264,7 @@ docker compose up --build -d        # rebuild after package.json changes
 
 **`docker compose up --build` fails during image build:** Usually a network issue or missing build tools. Check Docker is running. If it fails on `pnpm install` inside the container, check `Dockerfile.dev` (agent) or `Dockerfile.ui.dev` (UI) — the `apt-get` step in `Dockerfile.dev` installs build tools needed by baileys.
 
-**No cloudflared URL in logs:** Wait ~10s after startup, then retry `docker compose logs cloudflared`. If the `cloudflared` container exited, check `docker compose ps` and restart it: `docker compose up -d cloudflared`. The URL changes on every restart.
+**No ngrok URL / tunnel not working:** Check that `NGROK_AUTHTOKEN` is set in `.env` and the ngrok container is running (`docker compose ps`). If it exited, check `docker compose logs ngrok` — a missing or invalid token is the most common cause. Restart with `docker compose up -d ngrok` after fixing `.env`. Get the URL with `curl -s http://localhost:4040/api/tunnels`. For a stable URL that survives restarts, set up a free static domain at https://dashboard.ngrok.com/domains and hardcode the domain directly in the ngrok `command` in `docker-compose.yml`: `http --domain=your-domain.ngrok-free.app agent:3000`.
 
 **Agent crashes on startup:** Run `docker compose logs agent`. Common causes:
 - Missing `CORSAIR_KEK` in `.env`

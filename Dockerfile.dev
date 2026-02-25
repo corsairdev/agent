@@ -16,5 +16,14 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install
 
+# Give the node user ownership of app files (including node_modules named volume).
+RUN chown -R node:node /app
+
+# Pre-create Claude config so the SDK subprocess can write to it.
+RUN mkdir -p /home/node/.claude && echo '{}' > /home/node/.claude.json && chown -R node:node /home/node
+
+# Switch to non-root user (required for --dangerously-skip-permissions).
+USER node
+
 # Source code is NOT copied here — it's mounted at runtime via docker-compose.
 # Edits on the host are reflected immediately inside the container.

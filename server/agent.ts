@@ -1,176 +1,139 @@
-import { anthropic } from '@ai-sdk/anthropic';
-import { openai } from '@ai-sdk/openai';
-import type { ModelMessage } from 'ai';
-import { generateText, stepCountIs, streamText, tool, zodSchema } from 'ai';
+import {
+	createSdkMcpServer,
+	query,
+	tool,
+} from '@anthropic-ai/claude-agent-sdk';
 import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, permissions, whatsappMessages } from './db';
 import {
 	archiveWorkflow,
-	executeScript,
 	listWorkflows,
 	storeWorkflow,
 	updateWorkflowRecord,
 } from './executor';
-import { searchCodeExamples } from './search';
-import { typecheck } from './typecheck';
-
-function getModel() {
-	if (process.env.ANTHROPIC_API_KEY) return anthropic('claude-sonnet-4-5');
-	return openai('gpt-4.1');
-}
+import {
+	registerCronWorkflow,
+	unregisterCronWorkflow,
+} from './workflow-scheduler';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Result schemas
+// Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const AgentResultSchema = z.object({
-	type: z.enum(['script', 'workflow']),
-	workflowId: z.string().optional(),
-	code: z.string(),
-	description: z.string().optional(),
-	cronSchedule: z.string().optional(),
-	webhookTrigger: z
-		.object({ plugin: z.string(), action: z.string() })
-		.optional(),
-	output: z.string().optional(),
-	error: z.string().optional(),
-	message: z.string().optional(),
-});
-
-export type AgentResult = z.infer<typeof AgentResultSchema>;
+export type SimpleMessage = { role: 'user' | 'assistant'; text: string };
 
 export type AgentOutput =
-	| AgentResult
 	| {
 			type: 'needs_input';
 			question: string;
-			pendingMessages: ModelMessage[];
-			toolCallId: string;
-			toolName: string;
-			/** Set when ask_human was triggered by a permission request */
 			permissionId?: string;
 	  }
 	| {
 			type: 'message';
 			text: string;
+	  }
+	| {
+			type: 'done'; // messages were already sent inline via send_message
+			messages: string[];
 	  };
+
+export type AgentStreamChunk =
+	| { type: 'text-delta'; delta: string }
+	| { type: 'tool-call'; toolCallId: string; toolName: string }
+	| { type: 'tool-result'; toolCallId: string; toolName: string }
+	| { type: 'finish' }
+	| { type: 'needs-input'; question: string; permissionId?: string };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MODEL = 'claude-sonnet-4-6';
+const MAX_TURNS = 30;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // System prompt
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `
+You are a personal automation assistant that helps users write, execute, and manage code and workflows with Corsair. The \`corsair\` client is available as a global — do NOT import it.
 
-You are a personal automation assistant that helps users build automations with Corsair: one-off scripts, scheduled (cron) workflows, and webhook-triggered workflows. The \`corsair\` client is available as a global — do NOT import it.
+## Tone
+
+Be friendly and conversational. Keep every message short — 1–3 sentences max. No walls of text.
+
+**Always acknowledge a new request first** — call \`send_message\` with something brief before doing any work: "On it!", "Taking a look!", "Sure, give me a sec." Then use \`send_message\` again for notable updates while you work, and for your final reply.
 
 ## Tools
 
-- **ask_human**: Pause and wait for a reply. REQUIRED when you need user input — never ask in plain text.
-- **request_permission**: Request approval for a protected endpoint. Call this when a script logs a \`[PERMISSION_REQUIRED]\` message. Pass the exact endpoint and args from the log, plus a friendly description. The user will review and approve or decline on a dedicated page.
-- **search_code_examples**: Find Corsair API patterns. Call before writing code.
-- **write_and_execute_code**: Write TypeScript, typecheck, and run (scripts) or validate (workflows). Use this not just to act, but to explore and confirm — it is your window into the outside world.
-- **manage_workflows**: List, create, update, or archive workflows. After successfully writing a workflow with \`write_and_execute_code\`, call \`manage_workflows\` with \`action: "create"\` and the same workflowId, code, description, cronSchedule/webhookTrigger to store it so it runs on future triggers.
-- **get_conversation_history** *(WhatsApp only)*: Fetch past messages from the current chat. Call this when you need more context about a previous request, an earlier decision, or anything the user may have mentioned before. Pick a \`limit\` that is just enough — start small (e.g. 5) and call again with a larger number if still unclear.
+- **send_message**: Send a message to the user without pausing. Use for acknowledgments, progress updates, and final answers. Call it multiple times throughout a task.
+- **ask_human**: Pause and wait for the user's reply. Use ONLY when you genuinely cannot proceed without input. Never ask in plain text — always use this tool. Include fetched options when you do ask.
+- **request_permission**: Request approval for a protected endpoint. Call when a script logs \`[PERMISSION_REQUIRED]\`. Pass the exact endpoint, args, and a short description. Then call \`ask_human\` with the approval URL as the question — this pauses you until the user approves or declines.
+- **manage_workflows**: List, create, update, or archive workflows. After writing and testing a workflow, call this with \`action: "create"\`. Once it returns success, **always** call \`send_message\` to confirm: the workflow name and when it runs.
+- **get_conversation_history**: Fetch past messages for context. Start with a small limit (5) and increase if needed.
+- **WebSearch**: Search the web for any general knowledge, current events, recommendations (restaurants, products, etc.), or real-time information. Use this freely for questions that don't require Corsair integrations.
+- **WebFetch**: Fetch the contents of a specific URL. Use when you need to read a webpage directly.
 
-## Execution model
+## Writing and running code
 
-Treat \`write_and_execute_code\` as a REPL: a tool for both understanding the world and acting on it. For any task that touches real data, explore before you commit.
+For scripts: prepend \`import { corsair } from './server/corsair';\`
+For workflows: at the top add \`declare const __event: unknown;\` (never \`const __event = null\` — the runtime injects the real value).
 
-**For multi-step one-off scripts:**
-Break the job into sequential phases. Each phase is its own \`write_and_execute_code\` call:
-1. **Research phase** — fetch the data you need and \`console.log\` exactly what you'll use downstream: IDs, names, counts, content, addresses. Read the output before moving on.
-2. **Action phase** — use the confirmed values from the research output to execute the action. If that action produces a result that drives the next step, log it and handle it in a third call.
+Write \`.ts\` temp files. Typecheck: \`npx tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck --allowImportingTsExtensions --esModuleInterop <file>\`. Run: \`npx tsx <file>\`. Delete temp files when done.
 
-Never collapse dependent steps into one script if the second step relies on reading the first step's output. For example, if a user asks to pull open tasks from a project and send a summary to a person, first fetch and log the tasks and the person's contact details. Then, using that confirmed data, compose and send the message.
+**Scripts:** Self-invoking \`main()\`, wrapped in try-catch.
+**Workflows:** \`export async function <name>() { ... }\`. Cron: pass \`cronSchedule\`. Webhook: pass \`webhookTrigger: { plugin, action }\` where action is the dot-path. Event payload is in \`__event\` (cast as needed).
 
-**For workflows and cron jobs:**
-You cannot interactively inspect output at runtime, so do your research upfront before writing the workflow:
-1. Run a **one-off research script** first. Fetch and log every identifier you'll need — exact resource names, IDs, addresses, list names, project keys, etc. Confirm they exist.
-2. Write the workflow using only the confirmed exact identifiers from step 1. Never hardcode a name or ID you haven't verified with a live API call.
+**Finding webhook triggers**: Read \`node_modules/corsair/dist/plugins/<plugin>/index.d.ts\` — the \`{plugin}WebhooksNested\` declaration lists every available trigger as nested keys; outer key + inner key form the dot-path action (e.g. \`issues: { create }\` → action \`"issues.create"\`). Event type names are shown inline; read \`node_modules/corsair/dist/plugins/<plugin>/webhooks/types.d.ts\` to get the full interface for casting \`__event\`.
 
-For example, if a user wants a weekly digest sent to a mailing list, run a script first to list all mailing lists and log their exact names. Find the right one, then write the workflow using that confirmed name.
+Read \`server/seed/examples.ts\` or Grep by plugin name before writing code — examples show the right call shapes.
 
-## Deduction and fuzzy matching
+## Execution approach
 
-Never give up on a resource because an exact string match failed. Users describe things loosely — with different spacing, casing, punctuation, or shorthand. Before concluding something doesn't exist:
-1. Fetch the full list of available resources of that type.
-2. \`console.log\` the full list so you can read it.
-3. Look for a close match: collapsed spaces, hyphens vs spaces, different capitalisation, common abbreviations, partial name matches.
-4. If you find a clear match, proceed with the correct identifier — do not ask the user.
+Treat code as a REPL. Break multi-step tasks into phases:
+1. **Research** — fetch and log what you need (IDs, names, addresses). Read the output before continuing.
+2. **Act** — use the confirmed values from the research phase.
 
-For example, if a user says to email "the design team" and no contact group by that exact name exists, fetch all contact groups and look for anything resembling "design" — it might be "Design Team", "design-team", or "designers". If it's obvious, use it.
+For workflows, run a one-off research script first to confirm all identifiers before writing the workflow.
 
-Only escalate to \`ask_human\` after you have fetched and inspected the available options and genuinely cannot determine which one the user meant. When you do ask, include the fetched list so the user can pick.
+## Deduction
 
-## When to ask vs assume
+Users describe things loosely. If an exact match fails: fetch the full list, look for close matches (casing, spacing, abbreviations), and proceed if obvious. Only ask when genuinely ambiguous — and share the fetched options when you do.
 
-Ask when the target is unspecified and critical (e.g. which account to send from when there are multiple). Assume when the value is singular or clearly inferable. Don't ask when the user already specified it or you can resolve it with a live lookup.
+## Failures
 
-## Handling failures
+Fix silently: read the error, understand the cause, fix it, retry. Never share raw errors or failing code with the user.
 
-When code fails, **do not send the failing code or raw error to the user**. Instead:
-1. Read the first few lines of the code to understand what it was trying to do.
-2. Analyse the error and any output snippet to understand what went wrong.
-3. Fix the issue and retry.
+## Protected endpoints
 
-If the failure is a missing resource: apply the deduction process above — fetch the full list, look for a close match, and retry with the correct identifier. Only report failure or ask after you have exhausted this.
-
-Always use \`ask_human\` — never ask in plain text. Include fetched options so the user can pick.
-
-## Code shape
-
-**Scripts:** Self-invoking \`main()\`. Call \`corsair.<plugin>.api.<resource>.<method>(...)\`. Wrap the body in try-catch so errors are logged as output rather than unhandled throws.
-
-**Workflows:** \`export async function <name>() { ... }\`.
-- Cron: pass \`cronSchedule\` (e.g. \`0 9 * * *\`).
-- Webhook: pass \`webhookTrigger: { plugin, action }\`. Payload is in global \`__event\` (do not import; cast as needed). Examples: linear \`issues.create\`, slack \`messages.message\`, github \`starCreated\`.
-
-Code examples from search are for patterns — don't reuse example IDs or names.
+When a script returns \`[PERMISSION_REQUIRED]\`:
+1. Parse the endpoint and args.
+2. Call \`request_permission\`.
+3. Call \`ask_human\` with the approval URL as the question — this pauses you until the user approves or declines.
+4. When approved, re-run the script.
+5. If declined, use \`send_message\` to inform the user and stop.
 
 ## LLM in scripts
 
-Use the \`ai\` package (\`generateText\`) with \`process.env.ANTHROPIC_API_KEY\` → anthropic, else openai.
-
-## Handling protected endpoints
-
-Some endpoints are protected and require explicit user approval before execution. When you run a script that calls a protected endpoint, the output will include a line like:
-
-\`[PERMISSION_REQUIRED] endpoint=slack.messages.post args={"channel":"general","text":"Hello"} | This endpoint requires approval.\`
-
-When you see this:
-1. Parse the endpoint name and the args JSON from the message.
-2. Call \`request_permission\` with the endpoint, args, and a friendly description.
-3. The tool returns an approval URL. Call \`ask_human\` with a message like: "I need your permission to [description]. Please review and approve here: [URL]"
-4. When the user approves, you will resume. Re-run the same script — the endpoint will now succeed.
-5. If the user declines, do NOT retry. Inform the user that the action was cancelled.
-
-Never bypass or skip the permission step. Never call the endpoint a second time without first getting approval via \`request_permission\`.
-
-## Always reply to the user
-
-After completing any task — running a script, creating a workflow, answering a question — always send a short, friendly message back. Confirm what happened, share a key detail or result if relevant, and keep it to 1–3 sentences. Never finish silently.`;
+Use the \`ai\` package (\`generateText\`) with \`process.env.ANTHROPIC_API_KEY\` → anthropic, else openai.`;
 
 export const WORKFLOW_FAILURE_PROMPT = `
 ## Workflow failure escalation
 
-You have been invoked because a workflow failed. You will receive the workflow ID, code, error, trigger type (cron or webhook), and — for webhook failures — the event payload that triggered the run.
+You have been invoked because a workflow failed. You receive the workflow ID, code, error, trigger type (cron or webhook), and — for webhook failures — the event payload.
 
-Your job is to act autonomously without asking the user:
-1. **Diagnose** — read the code and the error carefully to understand the root cause. Do not skim; the fix depends on the exact cause.
-2. **Fix the missed run** — write and execute a one-off script that performs what the workflow was supposed to do for this specific failed invocation. For webhook failures, use the event payload to reconstruct what should have happened. Do not skip this step — the missed action needs to be completed.
-3. **Fix and update the workflow** — correct the underlying issue in the code, then call \`manage_workflows\` with \`action: "update"\` to persist the fixed version so the same failure does not recur.
+Act autonomously without asking the user:
+1. **Diagnose** — read the code and error carefully to find the root cause.
+2. **Fix the missed run** — write and run a one-off script to complete what the workflow was supposed to do. For webhook failures, use the event payload. Do not skip this step.
+3. **Fix the workflow** — correct the issue in the code, then call \`manage_workflows\` with \`action: "update"\` to persist the fix.
 
-Apply the same research discipline as for any other task: if the failure is caused by a wrong identifier, unknown resource, or changed API shape, fetch the current state of those resources before writing the fix.
-
-Only use \`ask_human\` if you have diagnosed the failure and genuinely cannot determine the correct fix without more information from the user.
+If the failure is a bad identifier or changed API shape, fetch the current state first. Only use \`ask_human\` if you genuinely cannot fix it without user input.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-const OUTPUT_SNIPPET_LINES = 30;
 
 /** Trims, splits, returns first N non-empty lines. */
 export function snippetOutput(full: string): string {
@@ -179,258 +142,80 @@ export function snippetOutput(full: string): string {
 		.split('\n')
 		.map((l) => l.trim())
 		.filter((l) => l.length > 0);
-	return lines.slice(0, OUTPUT_SNIPPET_LINES).join('\n');
+	return lines.slice(0, 30).join('\n');
 }
 
-function getWorkflowFunctionName(code: string): string | null {
-	const match = code.match(/export\s+async\s+function\s+(\w+)\s*\(/);
-	return match ? match[1]! : null;
+function buildSystemPromptWithHistory(
+	history: SimpleMessage[],
+	systemExtra?: string,
+): string {
+	let prompt = SYSTEM_PROMPT;
+	if (systemExtra) prompt += '\n\n' + systemExtra;
+	if (history.length > 0) {
+		prompt += '\n\n## Conversation history\n\n';
+		for (const msg of history) {
+			prompt += `**${msg.role === 'user' ? 'User' : 'Assistant'}**: ${msg.text}\n\n`;
+		}
+	}
+	return prompt;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tools
+// In-process MCP server
 // ─────────────────────────────────────────────────────────────────────────────
 
-const agentTools = {
-	search_code_examples: tool({
-		description:
-			'Search Corsair API code examples by plugin name or keyword. Pass a plugin name (e.g. "slack", "github", "linear") or a keyword (e.g. "channels", "messages", "issues").',
-		inputSchema: zodSchema(z.object({ query: z.string() })),
-		execute: ({ query }) => {
-			const examples = searchCodeExamples(query, 5);
-			return {
-				examples: examples.map((ex) => ({
-					plugin: ex.plugin,
-					description: ex.description,
-					code: ex.code,
-				})),
-			};
+export function buildMcpServer(context?: {
+	jid?: string;
+	onMessage?: (text: string) => Promise<void>;
+	onAskHuman?: (question: string) => void;
+}) {
+	const sendMessageTool = tool(
+		'send_message',
+		'Send a message to the user without pausing. Use for acknowledgments ("On it!"), progress updates, and final answers. You can call it multiple times.',
+		{
+			message: z.string().describe('The message to send'),
 		},
-	}),
-
-	write_and_execute_code: tool({
-		description:
-			'Write TypeScript, typecheck, and run (scripts) or validate (workflows). Returns errors for retry.',
-		inputSchema: zodSchema(
-			z.object({
-				type: z.enum(['script', 'workflow']),
-				code: z.string(),
-				description: z.string().optional(),
-				cronSchedule: z.string().optional(),
-				webhookTrigger: z
-					.object({ plugin: z.string(), action: z.string() })
-					.optional(),
-			}),
-		),
-		execute: async ({
-			type,
-			code,
-			description,
-			cronSchedule,
-			webhookTrigger,
-		}) => {
-			const { valid, errors } = await typecheck(code);
-			if (!valid) {
-				return {
-					success: false,
-					error: 'TypeScript compilation failed',
-					errors,
-				};
-			}
-
-			try {
-				if (type === 'script') {
-					const result = await executeScript(code);
-					if (result.success) {
-						return {
-							success: true,
-							type: 'script',
-							code,
-							output: result.output ? snippetOutput(result.output) : undefined,
-							description: description?.trim() || undefined,
-						};
-					}
-					return {
-						success: false,
-						error: 'Script execution failed',
-						errors: result.error,
-						...(result.output && {
-							outputSnippet: snippetOutput(result.output),
-						}),
-					};
-				}
-
-				const workflowId = getWorkflowFunctionName(code);
-				if (!workflowId) {
-					return {
-						success: false,
-						error:
-							'Workflow must export one async function, e.g. "export async function myWorkflow() { ... }"',
-					};
-				}
-
-				return {
-					success: true,
-					type: 'workflow',
-					code,
-					workflowId,
-					description: description?.trim() || undefined,
-					cronSchedule: cronSchedule?.trim() || undefined,
-					webhookTrigger,
-				};
-			} catch (error) {
-				return {
-					success: false,
-					error: 'Execution failed',
-					errors: error instanceof Error ? error.message : String(error),
-				};
-			}
+		async ({ message }) => {
+			console.log(`[agent:send_message] ${message.slice(0, 120)}`);
+			await context?.onMessage?.(message);
+			return { content: [{ type: 'text' as const, text: 'sent' }] };
 		},
-	}),
+	);
 
-	manage_workflows: tool({
-		description:
-			'List (optional triggerType filter), create (store a new workflow), update (workflowId + fields), or archive (workflowId) workflows.',
-		inputSchema: zodSchema(
-			z.object({
-				action: z.enum(['list', 'create', 'update', 'delete']),
-				triggerType: z.enum(['cron', 'webhook', 'manual', 'all']).optional(),
-				workflowId: z.string().optional(),
-				code: z.string().optional(),
-				description: z.string().optional(),
-				cronSchedule: z.string().optional(),
-				webhookTrigger: z
-					.object({ plugin: z.string(), action: z.string() })
-					.optional(),
-				status: z.enum(['active', 'paused', 'archived']).optional(),
-			}),
-		),
-		execute: async ({
-			action,
-			triggerType,
-			workflowId,
-			code,
-			description,
-			cronSchedule,
-			webhookTrigger,
-			status,
-		}) => {
-			if (action === 'list') {
-				return { workflows: await listWorkflows(triggerType) };
-			}
-
-			if (action === 'create') {
-				if (!workflowId || !code) {
-					return {
-						success: false,
-						error: 'workflowId and code are required for create',
-					};
-				}
-				const stored = await storeWorkflow({
-					type: 'workflow',
-					workflowId,
-					code,
-					description: description?.trim() || undefined,
-					cronSchedule: cronSchedule?.trim() || undefined,
-					webhookTrigger,
-				});
-				return {
-					success: true,
-					workflow: {
-						id: stored.id,
-						name: stored.name,
-						triggerType: stored.triggerType,
-						status: stored.status,
-					},
-				};
-			}
-
-			if (!workflowId) {
-				return {
-					success: false,
-					error: `workflowId is required for ${action}`,
-				};
-			}
-
-			if (action === 'delete') {
-				const archived = await archiveWorkflow(workflowId);
-				if (!archived)
-					return {
-						success: false,
-						error: `Workflow "${workflowId}" not found`,
-					};
-				return {
-					success: true,
-					message: `Workflow "${archived.name}" archived`,
-				};
-			}
-
-			if (code) {
-				const { valid, errors } = await typecheck(code);
-				if (!valid) {
-					return {
-						success: false,
-						error: 'TypeScript compilation failed',
-						errors,
-					};
-				}
-			}
-
-			const updated = await updateWorkflowRecord(workflowId, {
-				code,
-				description,
-				cronSchedule,
-				webhookTrigger,
-				status,
-			});
-			if (!updated) {
-				return {
-					success: false,
-					error: `Workflow "${workflowId}" not found`,
-				};
-			}
-
-			return {
-				success: true,
-				workflow: {
-					id: updated.id,
-					name: updated.name,
-					triggerType: updated.triggerType,
-					status: updated.status,
-				},
-			};
+	const askHumanTool = tool(
+		'ask_human',
+		'Pause and ask the user a question. Only use when you genuinely cannot proceed without their input. Include any fetched options so they can choose.',
+		{
+			question: z.string().describe('The question to ask the user'),
 		},
-	}),
+		async ({ question }) => {
+			// Fire immediately so the abort is set before the SDK can dispatch the
+			// next model turn. The outer loop detection is kept as a fallback but
+			// this is the reliable interception point.
+			context?.onAskHuman?.(question);
+			return { content: [{ type: 'text', text: '(waiting for response)' }] };
+		},
+	);
 
-	ask_human: tool({
-		description:
-			'Ask the user one clarifying question. Pauses the session until the user replies. Include any fetched options.',
-		inputSchema: zodSchema(z.object({ question: z.string() })),
-	}),
-
-	request_permission: tool({
-		description:
-			'Request permission from the user to execute a protected endpoint. Call this when a script returns a [PERMISSION_REQUIRED] message. Returns an approval URL. After calling this, call ask_human with the approval URL so the user can review and approve.',
-		inputSchema: zodSchema(
-			z.object({
-				endpoint: z
-					.string()
-					.describe(
-						'Full endpoint path from the PERMISSION_REQUIRED message, e.g. "slack.messages.post"',
-					),
-				args: z
-					.record(z.unknown())
-					.describe(
-						'The arguments object from the PERMISSION_REQUIRED message',
-					),
-				description: z
-					.string()
-					.describe(
-						'Short human-readable summary of what this action will do, e.g. "Post a message to #general in Slack"',
-					),
-			}),
-		),
-		execute: async ({ endpoint, args, description }) => {
+	const requestPermissionTool = tool(
+		'request_permission',
+		'Request permission from the user to execute a protected endpoint. Call this when a script returns a [PERMISSION_REQUIRED] message. Returns an approval URL. After calling this, call ask_human with the approval URL so the user can review and approve.',
+		{
+			endpoint: z
+				.string()
+				.describe(
+					'Full endpoint path from the PERMISSION_REQUIRED message, e.g. "slack.messages.post"',
+				),
+			args: z
+				.record(z.unknown())
+				.describe('The arguments object from the PERMISSION_REQUIRED message'),
+			description: z
+				.string()
+				.describe(
+					'Short human-readable summary of what this action will do, e.g. "Post a message to #general in Slack"',
+				),
+		},
+		async ({ endpoint, args, description }) => {
 			const [plugin, ...rest] = endpoint.split('.');
 			const operation = rest.join('.');
 
@@ -443,47 +228,220 @@ const agentTools = {
 					args,
 					description,
 					status: 'pending',
+					jid: context?.jid,
 				})
 				.returning({ id: permissions.id });
 
-			const baseUrl = process.env.BASE_PERMISSION_URL; // WEBHOOK URL
+			const baseUrl = process.env.BASE_PERMISSION_URL;
 			const approvalUrl = `${baseUrl}/permissions/${perm!.id}`;
 
-			return {
+			const result = {
 				permissionId: perm!.id,
 				approvalUrl,
 				message: `Permission request created. Ask the user to approve at: ${approvalUrl}`,
 			};
+			return {
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			};
 		},
-	}),
-};
+	);
 
-/** Exported for unit tests. */
-export const writeAndExecuteCodeTool = agentTools.write_and_execute_code;
+	const manageWorkflowsTool = tool(
+		'manage_workflows',
+		'List (optional triggerType filter), create (store a new workflow), update (workflowId + fields), or archive (workflowId) workflows.',
+		{
+			action: z
+				.enum(['list', 'create', 'update', 'delete'])
+				.describe('The action to perform'),
+			triggerType: z
+				.enum(['cron', 'webhook', 'manual', 'all'])
+				.optional()
+				.describe('Filter workflows by trigger type (for list)'),
+			workflowId: z
+				.string()
+				.optional()
+				.describe('Workflow ID (function name) for create/update/delete'),
+			code: z.string().optional().describe('Workflow code for create/update'),
+			description: z.string().optional().describe('Human-readable description'),
+			cronSchedule: z
+				.string()
+				.optional()
+				.describe('Cron schedule for create/update'),
+			webhookTrigger: z
+				.object({ plugin: z.string(), action: z.string() })
+				.optional()
+				.describe('Webhook trigger for create/update'),
+			status: z
+				.enum(['active', 'paused', 'archived'])
+				.optional()
+				.describe('Workflow status for update'),
+		},
+		async ({
+			action,
+			triggerType,
+			workflowId,
+			code,
+			description,
+			cronSchedule,
+			webhookTrigger,
+			status,
+		}) => {
+			console.log(
+				`[manage_workflows] action=${action} workflowId=${workflowId ?? 'N/A'} cronSchedule=${cronSchedule ?? 'N/A'} codeLen=${code?.length ?? 0}`,
+			);
+			let result: unknown;
 
-/**
- * Returns the get_conversation_history tool.
- * The jid is captured in a closure; when undefined (non-WhatsApp contexts) the
- * tool returns an informative error so the agent can handle it gracefully.
- */
-function makeHistoryTool(jid: string | undefined) {
-	return tool({
-		description:
-			'Fetch past messages from the current WhatsApp chat. Use when you need more context about what the user said earlier. Start with a small limit and call again with a larger one if needed.',
-		inputSchema: zodSchema(
-			z.object({
-				limit: z
-					.number()
-					.int()
-					.min(1)
-					.max(20)
-					.describe('How many recent messages to retrieve (newest first).'),
-			}),
-		),
-		execute: async ({ limit }) => {
-			if (!jid) {
+			if (action === 'list') {
+				result = { workflows: await listWorkflows(triggerType) };
+			} else if (action === 'create') {
+				if (!workflowId || !code) {
+					result = {
+						success: false,
+						error: 'workflowId and code are required for create',
+					};
+				} else {
+					const stored = await storeWorkflow({
+						type: 'workflow',
+						workflowId,
+						code,
+						description: description?.trim() || undefined,
+						cronSchedule: cronSchedule?.trim() || undefined,
+						webhookTrigger,
+						notifyJid: context?.jid,
+					});
+					console.log(
+						`[manage_workflows] storeWorkflow → id=${stored?.id} name=${stored?.name} triggerType=${stored?.triggerType}`,
+					);
+					// Register with the cron scheduler immediately if it's a cron workflow
+					if (stored && cronSchedule?.trim()) {
+						const ok = registerCronWorkflow(
+							stored.id,
+							workflowId,
+							code,
+							cronSchedule.trim(),
+							context?.jid,
+						);
+						console.log(`[manage_workflows] registerCronWorkflow → ok=${ok}`);
+						if (!ok) {
+							result = {
+								success: false,
+								error: `Invalid cron expression: "${cronSchedule}"`,
+							};
+							return {
+								content: [
+									{ type: 'text' as const, text: JSON.stringify(result) },
+								],
+							};
+						}
+					}
+					result = {
+						success: true,
+						workflow: {
+							id: stored!.id,
+							name: stored!.name,
+							triggerType: stored!.triggerType,
+							status: stored!.status,
+						},
+					};
+				}
+			} else if (action === 'delete') {
+				if (!workflowId) {
+					result = {
+						success: false,
+						error: 'workflowId is required for delete',
+					};
+				} else {
+					const archived = await archiveWorkflow(workflowId);
+					if (!archived) {
+						result = {
+							success: false,
+							error: `Workflow "${workflowId}" not found`,
+						};
+					} else {
+						unregisterCronWorkflow(archived.id);
+						result = {
+							success: true,
+							message: `Workflow "${archived.name}" archived`,
+						};
+					}
+				}
+			} else {
+				// action === 'update'
+				if (!workflowId) {
+					result = {
+						success: false,
+						error: 'workflowId is required for update',
+					};
+				} else {
+					const updated = await updateWorkflowRecord(workflowId, {
+						code,
+						description,
+						cronSchedule,
+						webhookTrigger,
+						status,
+					});
+					if (!updated) {
+						result = {
+							success: false,
+							error: `Workflow "${workflowId}" not found`,
+						};
+					} else {
+						// Sync the in-memory scheduler with the new DB state
+						if (updated.status === 'archived' || updated.status === 'paused') {
+							unregisterCronWorkflow(updated.id);
+						} else if (updated.triggerType === 'cron') {
+							const cfg = updated.triggerConfig as { cron?: string };
+							if (cfg.cron) {
+								registerCronWorkflow(
+									updated.id,
+									updated.name,
+									updated.code,
+									cfg.cron,
+								);
+							}
+						}
+						result = {
+							success: true,
+							workflow: {
+								id: updated.id,
+								name: updated.name,
+								triggerType: updated.triggerType,
+								status: updated.status,
+							},
+						};
+					}
+				}
+			}
+
+			return {
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			};
+		},
+	);
+
+	const getConversationHistoryTool = tool(
+		'get_conversation_history',
+		'Fetch past messages from the current WhatsApp chat. Use when you need more context about what the user said earlier. Start with a small limit and call again with a larger one if needed.',
+		{
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.describe('How many recent messages to retrieve (newest first).'),
+		},
+		async ({ limit }) => {
+			if (!context?.jid) {
 				return {
-					error: 'Conversation history is only available in WhatsApp chats.',
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({
+								error:
+									'Conversation history is only available in WhatsApp chats.',
+							}),
+						},
+					],
 				};
 			}
 
@@ -496,136 +454,234 @@ function makeHistoryTool(jid: string | undefined) {
 					isBot: whatsappMessages.isBot,
 				})
 				.from(whatsappMessages)
-				.where(eq(whatsappMessages.jid, jid))
+				.where(eq(whatsappMessages.jid, context.jid))
 				.orderBy(desc(whatsappMessages.sentAt))
 				.limit(limit);
 
-			// Return oldest-first so the agent reads chronologically
-			return {
+			const result = {
 				messages: rows.reverse().map((r) => ({
 					sender: r.isBot ? 'bot' : (r.senderName ?? r.senderJid),
 					content: r.content,
 					sentAt: r.sentAt,
 				})),
 			};
+			return {
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			};
+		},
+	);
+
+	return createSdkMcpServer({
+		name: 'corsair',
+		version: '1.0.0',
+		tools: [
+			sendMessageTool,
+			askHumanTool,
+			requestPermissionTool,
+			manageWorkflowsTool,
+			getConversationHistoryTool,
+		],
+	});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main agent (non-streaming, used by WhatsApp/Telegram/escalation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function runAgent(
+	prompt: string,
+	opts: {
+		sessionId: string;
+		history: SimpleMessage[];
+		systemExtra?: string;
+		jid?: string;
+		onMessage?: (text: string) => Promise<void>;
+	},
+): Promise<AgentOutput> {
+	const sentMessages: string[] = [];
+	const onMessage = async (text: string) => {
+		sentMessages.push(text);
+		await opts.onMessage?.(text);
+	};
+
+	const systemPrompt = buildSystemPromptWithHistory(
+		opts.history,
+		opts.systemExtra,
+	);
+	const abortController = new AbortController();
+	let askHumanQuestion: string | null = null;
+	const mcpServer = buildMcpServer({
+		jid: opts.jid,
+		onMessage,
+		onAskHuman: (question) => {
+			askHumanQuestion = question;
+			// Defer abort so the tool handler returns cleanly before the SDK is stopped
+			process.nextTick(() => abortController.abort());
 		},
 	});
+	let lastAssistantText = '';
+	let turnCount = 0;
+
+	console.log(
+		`[agent] runAgent: prompt="${prompt.slice(0, 80)}${prompt.length > 80 ? '...' : ''}"`,
+	);
+
+	try {
+		for await (const msg of query({
+			prompt,
+			options: {
+				env: { ...process.env, CLAUDECODE: undefined },
+				abortController,
+				systemPrompt,
+				cwd: process.cwd(),
+				model: MODEL,
+				disallowedTools: [
+					'TeamCreate',
+					'TeamDelete',
+					'SendMessage',
+					'TodoWrite',
+					'Skill',
+				],
+				permissionMode: 'bypassPermissions',
+				includePartialMessages: true,
+				maxTurns: MAX_TURNS,
+				persistSession: false,
+				mcpServers: { corsair: mcpServer },
+			},
+		})) {
+			if (msg.type === 'assistant') {
+				turnCount++;
+				for (const block of msg.message.content) {
+					if (block.type === 'text') {
+						lastAssistantText = block.text;
+					}
+					if (block.type === 'tool_use') {
+						const inputPreview = JSON.stringify(block.input).slice(0, 120);
+						console.log(
+							`[agent] turn ${turnCount} tool_use: ${block.name} ${inputPreview}`,
+						);
+					}
+				}
+			}
+			if (abortController.signal.aborted) break;
+		}
+	} catch (err) {
+		if (!abortController.signal.aborted) throw err;
+	}
+
+	console.log(
+		`[agent] runAgent done: turns=${turnCount} sentMessages=${sentMessages.length} askHuman=${!!askHumanQuestion} lastText=${lastAssistantText.length > 0}`,
+	);
+
+	if (askHumanQuestion) {
+		return { type: 'needs_input', question: askHumanQuestion };
+	}
+
+	if (sentMessages.length > 0) {
+		return { type: 'done', messages: sentMessages };
+	}
+
+	if (lastAssistantText) {
+		return { type: 'message', text: lastAssistantText };
+	}
+
+	throw new Error('Agent did not produce a result');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Streaming entry point (chat UI)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function createAgentStream(messages: ModelMessage[]) {
-	const model = getModel();
-
-	const webSearchTool = process.env.ANTHROPIC_API_KEY
-		? anthropic.tools.webSearch_20250305({})
-		: openai.tools.webSearchPreview({});
-
-	return streamText({
-		model,
-		system: SYSTEM_PROMPT,
-		messages,
-		tools: {
-			...agentTools,
-			web_search: webSearchTool,
+export async function* createAgentStream(
+	prompt: string,
+	opts: {
+		sessionId: string;
+		history: SimpleMessage[];
+	},
+): AsyncGenerator<AgentStreamChunk> {
+	const systemPrompt = buildSystemPromptWithHistory(opts.history);
+	const abortController = new AbortController();
+	let askHumanQuestion: string | null = null;
+	const mcpServer = buildMcpServer({
+		onAskHuman: (question) => {
+			askHumanQuestion = question;
+			process.nextTick(() => abortController.abort());
 		},
-		stopWhen: stepCountIs(10),
 	});
-}
+	// Map from toolCallId → toolName so we can emit tool-result with name
+	const pendingToolCalls = new Map<string, string>();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main agent
-// ─────────────────────────────────────────────────────────────────────────────
+	try {
+		for await (const msg of query({
+			prompt,
+			options: {
+				env: { ...process.env, CLAUDECODE: undefined },
+				abortController,
+				systemPrompt,
+				cwd: process.cwd(),
+				model: MODEL,
+				permissionMode: 'bypassPermissions',
+				disallowedTools: ['Task'],
+				includePartialMessages: true,
+				maxTurns: MAX_TURNS,
+				persistSession: false,
+				mcpServers: { corsair: mcpServer },
+			},
+		})) {
+			if (msg.type === 'stream_event') {
+				const event = msg.event;
+				if (event.type === 'content_block_delta') {
+					const delta = event.delta satisfies { type: string; text?: string };
+					if (delta.type === 'text_delta' && delta.text) {
+						yield { type: 'text-delta', delta: delta.text };
+					}
+				} else if (event.type === 'content_block_start') {
+					const block = event.content_block satisfies {
+						type: string;
+						id?: string;
+						name?: string;
+					};
+					if (block.type === 'tool_use' && block.id && block.name) {
+						pendingToolCalls.set(block.id, block.name);
+						yield {
+							type: 'tool-call',
+							toolCallId: block.id,
+							toolName: block.name,
+						};
+					}
+				}
+			} else if (msg.type === 'user') {
+				const content = msg.message.content;
+				if (Array.isArray(content)) {
+					for (const block of content) {
+						if (
+							typeof block === 'object' &&
+							block !== null &&
+							'type' in block &&
+							(block satisfies { type: string }).type === 'tool_result'
+						) {
+							const toolResult = block satisfies { tool_use_id: string };
+							const toolName =
+								pendingToolCalls.get(toolResult.tool_use_id) ?? 'unknown';
+							yield {
+								type: 'tool-result',
+								toolCallId: toolResult.tool_use_id,
+								toolName,
+							};
+						}
+					}
+				}
 
-export async function runAgent(
-	messages: ModelMessage[],
-	context?: { jid?: string; systemExtra?: string },
-): Promise<AgentOutput> {
-	const model = getModel();
-
-	const webSearchTool = process.env.ANTHROPIC_API_KEY
-		? anthropic.tools.webSearch_20250305({})
-		: openai.tools.webSearchPreview({});
-
-	const system = context?.systemExtra
-		? SYSTEM_PROMPT + '\n' + context.systemExtra
-		: SYSTEM_PROMPT;
-
-	const result = await generateText({
-		model,
-		system,
-		messages,
-		tools: {
-			...agentTools,
-			web_search: webSearchTool,
-			get_conversation_history: makeHistoryTool(context?.jid),
-		},
-		stopWhen: stepCountIs(10),
-	});
-
-	// ask_human has no execute fn — the SDK stops with finishReason 'tool-calls'
-	if (result.finishReason === 'tool-calls') {
-		const askCall = result.staticToolCalls.find(
-			(tc) => tc.toolName === 'ask_human',
-		);
-		if (askCall) {
-			// Check if ask_human was preceded by a request_permission call
-			const allResults = result.steps.flatMap((s) => s.staticToolResults);
-			const permResult = allResults
-				.slice()
-				.reverse()
-				.find(
-					(r: { toolName: string }) => r.toolName === 'request_permission',
-				) as { output: Record<string, unknown> } | undefined;
-
-			return {
-				type: 'needs_input',
-				question: askCall.input.question,
-				pendingMessages: [...messages, ...result.response.messages],
-				toolCallId: askCall.toolCallId,
-				toolName: askCall.toolName,
-				permissionId: permResult?.output?.permissionId as string | undefined,
-			};
+				if (abortController.signal.aborted) break;
+			}
 		}
+	} catch (err) {
+		if (!abortController.signal.aborted) throw err;
 	}
 
-	// Find the last successful code execution across all steps (agent may retry)
-	const allToolResults = result.steps.flatMap((s) => s.staticToolResults);
-	const agentMessage = result.text || undefined;
-
-	for (let i = allToolResults.length - 1; i >= 0; i--) {
-		const r = allToolResults[i]!;
-		if (r.toolName !== 'write_and_execute_code') continue;
-		if (!r.output.success) continue;
-
-		if (r.output.type === 'script') {
-			return {
-				type: 'script',
-				code: r.output.code,
-				description: r.output.description,
-				output: r.output.output,
-				message: agentMessage,
-			};
-		}
-
-		return {
-			type: 'workflow',
-			workflowId: r.output.workflowId,
-			code: r.output.code || '',
-			description: r.output.description,
-			cronSchedule: r.output.cronSchedule,
-			webhookTrigger: r.output.webhookTrigger,
-			message: agentMessage,
-		};
+	if (askHumanQuestion) {
+		yield { type: 'needs-input', question: askHumanQuestion };
+	} else {
+		yield { type: 'finish' };
 	}
-
-	if (result.finishReason === 'stop' && result.text) {
-		return { type: 'message', text: result.text };
-	}
-
-	throw new Error(
-		`Agent did not produce a result. Finish reason: ${result.finishReason}`,
-	);
 }

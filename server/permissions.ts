@@ -3,8 +3,8 @@ import { db, permissions } from './db';
 
 /**
  * Checks whether a granted (but not yet completed) permission exists for the
- * given endpoint and exact args. Each distinct set of args requires its own
- * approval — e.g. creating two different issues needs two separate grants.
+ * given endpoint and exact args. Strict matching ensures the API call uses
+ * exactly what the user approved.
  */
 export async function checkPermission(
 	endpoint: string,
@@ -27,30 +27,11 @@ export async function checkPermission(
 }
 
 /**
- * Marks the granted permission for this specific endpoint + args as completed
- * so it cannot be reused.
+ * Marks a granted permission as completed so it cannot be reused (single-use model).
  */
-export async function completePermission(
-	endpoint: string,
-	args: unknown,
-): Promise<void> {
-	const [perm] = await db
-		.select({ id: permissions.id })
-		.from(permissions)
-		.where(
-			and(
-				eq(permissions.endpoint, endpoint),
-				eq(permissions.status, 'granted'),
-				sql`${permissions.args} = ${JSON.stringify(args)}::jsonb`,
-			),
-		)
-		.orderBy(desc(permissions.createdAt))
-		.limit(1);
-
-	if (perm) {
-		await db
-			.update(permissions)
-			.set({ status: 'completed', updatedAt: new Date() })
-			.where(eq(permissions.id, perm.id));
-	}
+export async function completePermission(id: string): Promise<void> {
+	await db
+		.update(permissions)
+		.set({ status: 'completed', updatedAt: new Date() })
+		.where(eq(permissions.id, id));
 }

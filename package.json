@@ -23,13 +23,11 @@
     "available-plugins": "tsx scripts/available-plugins.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.44",
-    "@ai-sdk/openai": "3.0.29",
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "ai": "6.0.89",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.52",
     "@trpc/server": "^11.10.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "chokidar": "^4.0.3",
-    "corsair": "0.1.12",
+    "corsair": "0.1.13",
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.44.5",
     "express": "^4.21.0",

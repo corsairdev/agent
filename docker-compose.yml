@@ -25,8 +25,12 @@ services:
       # Named volume so node_modules can be explicitly cleared on rebuild.
       # Anonymous volumes persist across rebuilds and silently shadow new image layers.
       - agent_node_modules:/app/node_modules
+      # corsair.ts is read-only inside the container — only the developer (via Claude Code)
+      # should edit this file. The agent SDK cannot write to it.
+      - ./server/corsair.ts:/app/server/corsair.ts:ro
     environment:
       - DATABASE_URL=postgresql://postgres:secret@postgres:5432/corsair
+      - DEBUG_CLAUDE_AGENT_SDK=1
       # Enable polling so tsx watch detects changes via Docker Desktop's virtiofs share.
       - CHOKIDAR_USEPOLLING=true
     env_file:
@@ -58,33 +62,20 @@ services:
       - agent
     command: pnpm dev
 
-  drizzle-studio:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    volumes:
-      - .:/app
-      - agent_node_modules:/app/node_modules
+  # Exposes the agent server to the internet via an ngrok tunnel.
+  # Set NGROK_AUTHTOKEN in .env (required). Set NGROK_DOMAIN for a stable URL.
+  # The public URL is available at http://localhost:4040 after startup.
+  ngrok:
+    image: ngrok/ngrok:latest
+    command: http agent:3000
     environment:
-      - DATABASE_URL=postgresql://postgres:secret@postgres:5432/corsair
-    env_file:
-      - .env
-    ports:
-      - "4983:4983"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: pnpm exec drizzle-kit studio
-
-  # Exposes the agent server to the internet via a Cloudflare quick tunnel.
-  # The public URL is printed in the logs on startup — use it for webhooks.
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate --url http://agent:3000
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     depends_on:
       - agent
     restart: unless-stopped
+    ports:
+      - "4040:4040"
+
 
 volumes:
   pgdata:

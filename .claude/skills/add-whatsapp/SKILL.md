@@ -222,6 +222,7 @@ Check that `store/auth/creds.json` exists: `ls store/auth/`. If missing, re-run 
 
 **No response to messages:**
 - Check `WHATSAPP_ENABLED=true` is in `.env`
+- Ensure `TELEGRAM_ENABLED=false` in `.env`
 - Check `[whatsapp] Poller started` in server logs
 - For groups: message must contain `@corsair` (or `BOT_NAME`)
 

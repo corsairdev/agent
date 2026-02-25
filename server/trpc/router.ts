@@ -1,7 +1,7 @@
 import { initTRPC } from '@trpc/server';
-import type { ModelMessage, ToolModelMessage } from 'ai';
 import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import z from 'zod';
+import type { SimpleMessage } from '../agent';
 import { createAgentStream } from '../agent';
 import { db, permissions, threadMessages, threads } from '../db';
 
@@ -13,32 +13,6 @@ const t = initTRPC.context<object>().create();
 
 export const router = t.router;
 export const publicProcedure = t.procedure;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildResumeMessages(
-	storedMessages: ModelMessage[],
-	toolCallId: string,
-	toolName: string,
-	answer: string,
-): ModelMessage[] {
-	return [
-		...storedMessages,
-		{
-			role: 'tool',
-			content: [
-				{
-					type: 'tool-result',
-					toolCallId,
-					toolName,
-					output: { type: 'text', value: answer },
-				},
-			],
-		} satisfies ToolModelMessage,
-	];
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Router definition
@@ -115,33 +89,20 @@ export const appRouter = router({
 				text: input.message,
 			});
 
-			// 3. Find the most recent assistant message with pending (ask_human) state
+			// 3. Fetch recent messages to detect pending state and build history
 			const allRecent = await db
 				.select()
 				.from(threadMessages)
 				.where(eq(threadMessages.threadId, threadId))
 				.orderBy(desc(threadMessages.createdAt))
-				.limit(10);
+				.limit(20);
 
 			const pendingAssistant = allRecent.find(
-				(m) => m.role === 'assistant' && m.pendingToolCallId,
+				(m) => m.role === 'assistant' && m.pendingToolName === 'ask_human',
 			);
 
-			let modelMessages: ModelMessage[];
-
-			if (
-				pendingAssistant?.pendingMessages &&
-				pendingAssistant.pendingToolCallId &&
-				pendingAssistant.pendingToolName
-			) {
-				// Resume from the paused ask_human state
-				modelMessages = buildResumeMessages(
-					pendingAssistant.pendingMessages as ModelMessage[],
-					pendingAssistant.pendingToolCallId,
-					pendingAssistant.pendingToolName,
-					input.message,
-				);
-				// Clear pending state so it's not resumed again
+			// Clear pending state if present
+			if (pendingAssistant) {
 				await db
 					.update(threadMessages)
 					.set({
@@ -150,49 +111,31 @@ export const appRouter = router({
 						pendingToolName: null,
 					})
 					.where(eq(threadMessages.id, pendingAssistant.id));
-			} else {
-				// Build context from thread history (last 20 messages, oldest-first)
-				const history = await db
-					.select()
-					.from(threadMessages)
-					.where(eq(threadMessages.threadId, threadId))
-					.orderBy(asc(threadMessages.createdAt))
-					.limit(20);
-
-				modelMessages = history.map((m) => ({
-					role: m.role as 'user' | 'assistant',
-					content: m.text || '',
-				}));
 			}
 
-			// 4. Stream the agent
-			const streamResult = createAgentStream(modelMessages);
+			// Build history oldest-first, excluding the current user message (it's the prompt)
+			const historyRows = allRecent.slice(0, -1).reverse();
+			const history: SimpleMessage[] = historyRows.map((m) => ({
+				role: m.role as 'user' | 'assistant',
+				text: m.text || '',
+			}));
 
+			// 4. Stream the agent
 			const collectedToolCalls: Array<{
 				toolCallId: string;
 				toolName: string;
 				done: boolean;
 			}> = [];
 			let collectedText = '';
-			let askHumanCall: {
-				question: string;
-				toolCallId: string;
-				toolName: string;
-			} | null = null;
-			let capturedPermissionId: string | null = null;
 
-			for await (const chunk of streamResult.fullStream) {
+			for await (const chunk of createAgentStream(input.message, {
+				sessionId: threadId,
+				history,
+			})) {
 				if (chunk.type === 'text-delta') {
-					collectedText += chunk.text;
-					yield { type: 'text-delta' as const, delta: chunk.text };
+					collectedText += chunk.delta;
+					yield { type: 'text-delta' as const, delta: chunk.delta };
 				} else if (chunk.type === 'tool-call') {
-					if (chunk.toolName === 'ask_human') {
-						askHumanCall = {
-							question: (chunk.input as { question: string }).question,
-							toolCallId: chunk.toolCallId,
-							toolName: chunk.toolName,
-						};
-					}
 					collectedToolCalls.push({
 						toolCallId: chunk.toolCallId,
 						toolName: chunk.toolName,
@@ -208,90 +151,82 @@ export const appRouter = router({
 						(t) => t.toolCallId === chunk.toolCallId,
 					);
 					if (idx >= 0) collectedToolCalls[idx]!.done = true;
-
-					if (chunk.toolName === 'request_permission') {
-						const result = (
-							chunk as unknown as { result: { permissionId?: string } }
-						).result;
-						if (result?.permissionId) {
-							capturedPermissionId = result.permissionId;
-						}
-					}
-
 					yield {
 						type: 'tool-result' as const,
 						toolCallId: chunk.toolCallId,
 						toolName: chunk.toolName,
 					};
-				} else if (chunk.type === 'finish') {
-					if (askHumanCall) {
-						// Emit the ask_human question as visible text if the model
-						// didn't produce any text-delta chunks before calling the tool.
-						if (!collectedText) {
-							collectedText = askHumanCall.question;
-							yield {
-								type: 'text-delta' as const,
-								delta: askHumanCall.question,
-							};
-						}
+				} else if (chunk.type === 'needs-input') {
+					// Emit the ask_human question as visible text if no text was streamed
+					if (!collectedText) {
+						collectedText = chunk.question;
+						yield { type: 'text-delta' as const, delta: chunk.question };
+					}
 
-						const response = await streamResult.response;
-						const pendingMsgs: ModelMessage[] = [
-							...modelMessages,
-							...response.messages,
-						];
+					// Look up any recently created pending permission
+					const [recentPerm] = await db
+						.select({ id: permissions.id })
+						.from(permissions)
+						.where(
+							and(
+								eq(permissions.status, 'pending'),
+								isNull(permissions.messageId),
+							),
+						)
+						.orderBy(desc(permissions.createdAt))
+						.limit(1);
+					const permissionId = recentPerm?.id ?? null;
 
-						// Use permissionId captured from the tool result; fall back to DB query
-						let permissionId = capturedPermissionId;
-						if (!permissionId) {
-							const [recentPerm] = await db
-								.select({ id: permissions.id })
-								.from(permissions)
-								.where(
-									and(
-										eq(permissions.status, 'pending'),
-										isNull(permissions.messageId),
-									),
-								)
-								.orderBy(desc(permissions.createdAt))
-								.limit(1);
-							permissionId = recentPerm?.id ?? null;
-						}
-
-						const [savedMsg] = await db
-							.insert(threadMessages)
-							.values({
-								threadId,
-								role: 'assistant',
-								text: collectedText,
-								toolCalls: collectedToolCalls,
-								pendingMessages: pendingMsgs,
-								pendingToolCallId: askHumanCall.toolCallId,
-								pendingToolName: askHumanCall.toolName,
-							})
-							.returning({ id: threadMessages.id });
-
-						if (permissionId && savedMsg) {
-							await db
-								.update(permissions)
-								.set({ messageId: savedMsg.id })
-								.where(eq(permissions.id, permissionId));
-						}
-
-						yield {
-							type: 'needs-input' as const,
-							question: askHumanCall.question,
-							permissionId,
-						};
-					} else {
-						// Normal finish — save assistant message
-						await db.insert(threadMessages).values({
+					const [savedMsg] = await db
+						.insert(threadMessages)
+						.values({
 							threadId,
 							role: 'assistant',
 							text: collectedText,
 							toolCalls: collectedToolCalls,
-						});
+							pendingMessages: null,
+							pendingToolCallId: 'ask_human',
+							pendingToolName: 'ask_human',
+						})
+						.returning({ id: threadMessages.id });
+
+					if (permissionId && savedMsg) {
+						await db
+							.update(permissions)
+							.set({ messageId: savedMsg.id })
+							.where(eq(permissions.id, permissionId));
 					}
+
+					// Update thread
+					const [currentThread] = await db
+						.select({ title: threads.title })
+						.from(threads)
+						.where(eq(threads.id, threadId))
+						.limit(1);
+
+					await db
+						.update(threads)
+						.set({
+							updatedAt: new Date(),
+							...(currentThread && !currentThread.title
+								? { title: input.message.slice(0, 60) }
+								: {}),
+						})
+						.where(eq(threads.id, threadId));
+
+					yield {
+						type: 'needs-input' as const,
+						question: chunk.question,
+						permissionId,
+					};
+				} else if (chunk.type === 'finish') {
+					// Normal finish — save assistant message
+					await db.insert(threadMessages).values({
+						threadId,
+						role: 'assistant',
+						text: collectedText,
+						toolCalls: collectedToolCalls,
+					});
 
 					// Update thread updatedAt and auto-title from first user message
 					const [currentThread] = await db

@@ -693,6 +693,7 @@ Telegram message received
 **Bot not responding to messages:**
 - Check `TELEGRAM_ENABLED=true` in `.env`
 - Check `TELEGRAM_BOT_TOKEN` is set and correct
+- Ensure `WHATSAPP_ENABLED=false` in `.env`
 - Check `[telegram] Poller started` in logs: `docker compose logs agent | grep telegram`
 - For groups: message must include `@corsair` (or `BOT_NAME`)
 

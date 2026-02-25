@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import path from 'path';
 import { db, whatsappChats, whatsappMessages } from '../db';
+import { registerWhatsAppSender } from '../notifier';
 import type { InboundMessage } from './connection';
 import { defaultAuthDir, WhatsAppConnection } from './connection';
 import { startPoller } from './poller';
@@ -64,6 +65,8 @@ export async function startWhatsApp(): Promise<() => Promise<void>> {
 
 	// Connects using saved credentials (fast — no QR or pairing needed)
 	await connection.connect();
+
+	registerWhatsAppSender((jid, text) => connection.sendMessage(jid, text));
 
 	const stopPoller = startPoller(
 		(jid, text) => connection.sendMessage(jid, text),
