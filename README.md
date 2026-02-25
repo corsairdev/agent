@@ -28,17 +28,17 @@ Claude Code handles everything: dependencies, database, Docker, credentials, and
 
 **Guardrails in the code, not the prompt.** Because every API call goes through the Corsair SDK, the agent cannot instruct its way around it, or decide it doesn't apply. It is structurally incapable of proceeding without your explicit sign-off. The sign-off is a temporarily-generated link that you receive in your messaging app. Click it, review the content, and approve or decline the agent's actions.
 
-**APIs, not MCP.** The Corsair SDK exposes more functionality too: most services offer far more via their REST API than any MCP server covers, so the agent can do things MCP-based assistants simply can't. Also, MCP loads every available tool into the context window upfront, which means tokens are spent before the agent does anything. Instead, the agent interacts with the Corsair SDK the way a human would: by reading types, checking available methods, understanding the shape of a response before acting on it.
+**APIs, not MCP.** Because the Corsair SDK is built on API, you can do more. Most services let you take more action via their REST API than any MCP server covers, so the agent can do things MCP-based assistants simply can't. Also, MCP loads every available tool into the context window upfront, which means tokens are spent before the agent does anything. Instead, Corsair interacts with an API the way a human would: reading types, checking available methods, and understanding the shape of a response before acting on it.
 
-**Webhooks and schedules that just work.** API also allows for native webhooks. Simply tell Corsair to let you know when something happens, and it can do it seamlessly. If a workflow fails, Corsair diagnoses and repairs it on its own.
+**Webhooks and schedules that just work.** API also allows for native webhooks. Simply tell Corsair to let you know when something happens, and it can do it seamlessly. If a workflow fails, Corsair diagnoses and repairs it on its own. You also don't have to poll every endpoint manually like with MCP.
 
-**Skills over features.** Want to add an integration, require approval for a new action, or wire in a different channel? Run a skill. Skills are markdown files — **no code to write**. Corsair modifies itself through conversation.
+**Skills over features.** Want to add an integration, require approval for a new action, or wire in a different channel? Run a skill. Skills are markdown files so there's **no code to write**. Corsair modifies itself through conversation.
 
 **Your dashboard, truly yours.** Most tools give you a fixed UI you configure around. Corsair comes wired up and you just describe the interface you want on top of it. Chat, buttons, triggers, alerts, tables, whatever makes sense for how you work. Every piece of data that moves through Corsair is persisted, so anything you build has full history to draw from. You're not customising someone else's product. You're building yours, but the hard parts are already done.
 
 ## What It Supports
 
-- **Messenger I/O** — WhatsApp, Telegram, or the included, fully-customizable web UI
+- **Messaging** — WhatsApp, Telegram, or the included, fully-customizable web UI
 - **Pre-built integrations** — Slack, GitHub, Linear, Gmail, HubSpot, Resend, PostHog, Google Drive, Google Sheets, Google Calendar, Web Search. More via skills.
 - **Webhook triggers** — React to real events: new PR, incoming email, deal created, issue updated, anything your connected services emit
 - **Scheduled workflows** — Recurring tasks that run automatically and notify you when done
