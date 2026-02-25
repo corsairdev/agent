@@ -91,7 +91,7 @@ The `cwd` for `query()` becomes this directory, so the SDK picks up `CLAUDE.md` 
 
 ## User Experience Impact
 
-**Before:** The agent might remember that you use Slack — or it might not. There's no way to tell what it knows. If you say "you know my timezone is PST" in one message, it probably won't remember in the next session. If you want to update or remove a memory, you have to ask indirectly and hope mem0ai picks it up.
+**Before:** The agent has no memory between sessions. If you say "my timezone is PST" in one message, it's gone the next. Every session starts cold. You end up re-stating the same context repeatedly.
 
 **After:** Memory is completely transparent. The user can ask the agent "what do you remember about me?" and it reads back exactly what's in `CLAUDE.md`. They can say "forget that I work at Acme" and the agent edits the file. They can say "always refer to my Slack workspace as the main workspace" and the agent adds that line.
 
