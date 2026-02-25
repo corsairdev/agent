@@ -121,7 +121,7 @@ async function main() {
   }
 
   // 2. Issue integration DEK and set OAuth app credentials
-  const integrationKeys = (corsair.keys as any)[PLUGIN]!;
+  const integrationKeys = corsair.keys[PLUGIN]!;
 
   await integrationKeys.issue_new_dek();
   await integrationKeys.set_client_id(CLIENT_ID);
@@ -150,7 +150,7 @@ async function main() {
   }
 
   // 4. Issue account DEK (tokens come from OAuth flow)
-  const accountKeys = (corsair as any)[PLUGIN]!.keys;
+  const accountKeys = corsair[PLUGIN]!.keys;
 
   await accountKeys.issue_new_dek();
   console.log(`  ✓ Account DEK ready`);

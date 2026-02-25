@@ -219,7 +219,7 @@ async function main() {
 		res: import('express').Response,
 	) {
 		try {
-			const pluginKeys = (corsair as any)[plugin].keys;
+			const pluginKeys = corsair[plugin].keys;
 			const creds = await pluginKeys.get_integration_credentials();
 			if (!creds.client_id || !creds.redirect_url) {
 				res.status(400).send(`${plugin} not configured. Run the setup script first.`);
@@ -262,7 +262,7 @@ async function main() {
 		const { label } = GOOGLE_PLUGIN_CONFIG[plugin];
 
 		try {
-			const pluginKeys = (corsair as any)[plugin].keys;
+			const pluginKeys = corsair[plugin].keys;
 			const creds = await pluginKeys.get_integration_credentials();
 			if (!creds.client_id || !creds.client_secret || !creds.redirect_url) {
 				res.status(400).send('Missing integration credentials.');
