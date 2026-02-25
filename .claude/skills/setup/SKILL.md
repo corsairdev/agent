@@ -217,9 +217,7 @@ This lets the user exit at any point and return later — each sub-skill can be 
 
 ## Phase 5: Custom integrations
 
-Tell the user:
-
-You can set up any other integration you want once the setup is done.
+Tell the user they can set up any other integration you want once the setup is done.
 
 ---
 
