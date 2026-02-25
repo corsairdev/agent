@@ -201,6 +201,125 @@ async function main() {
 		}
 	});
 
+	// ── Google OAuth flow ─────────────────────────────────────────────────────
+
+	const GOOGLE_PLUGIN_CONFIG = {
+		googlecalendar: {
+			scope: 'https://www.googleapis.com/auth/calendar',
+			label: 'Google Calendar',
+		},
+		googledrive: {
+			scope: 'https://www.googleapis.com/auth/drive',
+			label: 'Google Drive',
+		},
+	} as const;
+
+	async function startGoogleOAuth(
+		plugin: keyof typeof GOOGLE_PLUGIN_CONFIG,
+		res: import('express').Response,
+	) {
+		try {
+			const pluginKeys = corsair[plugin].keys;
+			const creds = await pluginKeys.get_integration_credentials();
+			if (!creds.client_id || !creds.redirect_url) {
+				res.status(400).send(`${plugin} not configured. Run the setup script first.`);
+				return;
+			}
+			const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+			url.searchParams.set('client_id', creds.client_id);
+			url.searchParams.set('redirect_uri', creds.redirect_url);
+			url.searchParams.set('response_type', 'code');
+			url.searchParams.set('scope', GOOGLE_PLUGIN_CONFIG[plugin].scope);
+			url.searchParams.set('access_type', 'offline');
+			url.searchParams.set('prompt', 'consent');
+			url.searchParams.set('state', plugin);
+			console.log(`[oauth] Redirecting to Google consent screen for ${plugin}`);
+			res.redirect(url.toString());
+		} catch (err) {
+			console.error('[oauth] Failed to build auth URL:', err);
+			res.status(500).send('OAuth setup error — check server logs.');
+		}
+	}
+
+	app.get('/oauth/googlecalendar', (req, res) => startGoogleOAuth('googlecalendar', res));
+	app.get('/oauth/googledrive', (req, res) => startGoogleOAuth('googledrive', res));
+
+	app.get('/oauth/callback', async (req, res) => {
+		const { code, error, state } = req.query as { code?: string; error?: string; state?: string };
+
+		if (error || !code) {
+			res.status(400).setHeader('Content-Type', 'text/html').send(`
+				<!DOCTYPE html><html><head><title>OAuth Error</title></head>
+				<body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#0a0a0a;color:#ef4444">
+					<p>Authorization failed: ${error ?? 'no code returned'}.</p>
+				</body></html>`);
+			return;
+		}
+
+		const plugin = (state && state in GOOGLE_PLUGIN_CONFIG)
+			? (state as keyof typeof GOOGLE_PLUGIN_CONFIG)
+			: 'googlecalendar';
+		const { label } = GOOGLE_PLUGIN_CONFIG[plugin];
+
+		try {
+			const pluginKeys = corsair[plugin].keys;
+			const creds = await pluginKeys.get_integration_credentials();
+			if (!creds.client_id || !creds.client_secret || !creds.redirect_url) {
+				res.status(400).send('Missing integration credentials.');
+				return;
+			}
+
+			// Exchange code for tokens
+			const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: new URLSearchParams({
+					code,
+					client_id: creds.client_id,
+					client_secret: creds.client_secret,
+					redirect_uri: creds.redirect_url,
+					grant_type: 'authorization_code',
+				}),
+			});
+
+			if (!tokenRes.ok) {
+				const err = await tokenRes.text();
+				console.error('[oauth] Token exchange failed:', err);
+				res.status(500).send(`Token exchange failed: ${err}`);
+				return;
+			}
+
+			const tokens = await tokenRes.json() as {
+				access_token: string;
+				refresh_token?: string;
+				expires_in: number;
+			};
+
+			await pluginKeys.set_access_token(tokens.access_token);
+			if (tokens.refresh_token) {
+				await pluginKeys.set_refresh_token(tokens.refresh_token);
+			}
+
+			console.log(`[oauth] ${label} tokens stored successfully`);
+
+			res.setHeader('Content-Type', 'text/html').send(`
+				<!DOCTYPE html>
+				<html>
+				<head><title>${label} Connected</title></head>
+				<body style="font-family:-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#0a0a0a;color:#e8e8e8">
+					<div style="text-align:center;background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:40px 48px;max-width:400px">
+						<div style="font-size:48px;margin-bottom:16px">✅</div>
+						<h1 style="margin:0 0 8px;font-size:20px">${label} connected!</h1>
+						<p style="color:#888;margin:0">You can close this tab. Your agent is ready to use ${label}.</p>
+					</div>
+				</body>
+				</html>`);
+		} catch (err) {
+			console.error('[oauth] Callback error:', err);
+			res.status(500).send('OAuth callback error — check server logs.');
+		}
+	});
+
 	// ── tRPC router ───────────────────────────────────────────────────────────
 	app.use(
 		'/trpc',
