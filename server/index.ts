@@ -241,7 +241,7 @@ async function main() {
 		}
 	}
 
-	app.get('/oauth/google', (req, res) => startGoogleOAuth('googlecalendar', res));
+	app.get('/oauth/googlecalendar', (req, res) => startGoogleOAuth('googlecalendar', res));
 	app.get('/oauth/googledrive', (req, res) => startGoogleOAuth('googledrive', res));
 
 	app.get('/oauth/callback', async (req, res) => {

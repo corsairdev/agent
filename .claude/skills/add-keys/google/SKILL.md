@@ -158,7 +158,7 @@ async function main() {
   // 5. Print the correct OAuth URL for this plugin
   const oauthUrl = PLUGIN === 'googledrive'
     ? 'http://localhost:3000/oauth/googledrive'
-    : 'http://localhost:3000/oauth/google';
+    : 'http://localhost:3000/oauth/googlecalendar';
   console.log(`\n✓ Credentials stored. Now complete OAuth at ${oauthUrl}`);
   process.exit(0);
 }
@@ -186,7 +186,7 @@ Tell the user to open the correct URL for the plugin they set up:
 
 | Plugin | OAuth URL |
 |--------|-----------|
-| Google Calendar | http://localhost:3000/oauth/google |
+| Google Calendar | http://localhost:3000/oauth/googlecalendar |
 | Google Drive | http://localhost:3000/oauth/googledrive |
 
 This will:
@@ -205,4 +205,6 @@ No copying tokens manually — the server handles everything.
 
 **Token expiry (test mode):** Google OAuth refresh tokens for apps in test mode expire after 7 days of inactivity. To avoid this, publish the app: **OAuth consent screen → Publish App**. The unverified app warning during login is fine for personal use.
 
-**Re-authorizing:** If tokens expire or are revoked, just visit http://localhost:3000/oauth/google again.
+**Re-authorizing:** If tokens expire or are revoked, just visit the correct URL for the plugin again:
+- Google Calendar: http://localhost:3000/oauth/googlecalendar
+- Google Drive: http://localhost:3000/oauth/googledrive
