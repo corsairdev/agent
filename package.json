@@ -27,7 +27,7 @@
     "@trpc/server": "^11.10.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "chokidar": "^4.0.3",
-    "corsair": "0.1.13",
+    "corsair": "0.1.16",
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.44.5",
     "express": "^4.21.0",
