@@ -212,6 +212,10 @@ async function main() {
 			scope: 'https://www.googleapis.com/auth/drive',
 			label: 'Google Drive',
 		},
+		gmail: {
+			scope: 'https://mail.google.com/',
+			label: 'Gmail',
+		},
 	} as const;
 
 	async function startGoogleOAuth(
@@ -243,6 +247,7 @@ async function main() {
 
 	app.get('/oauth/googlecalendar', (req, res) => startGoogleOAuth('googlecalendar', res));
 	app.get('/oauth/googledrive', (req, res) => startGoogleOAuth('googledrive', res));
+	app.get('/oauth/gmail', (req, res) => startGoogleOAuth('gmail', res));
 
 	// ── Spotify OAuth flow ────────────────────────────────────────────────────
 

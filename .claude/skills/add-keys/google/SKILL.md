@@ -1,17 +1,17 @@
 ---
 name: add-keys/google
-description: Set up Google OAuth credentials for Corsair. Use when the user wants to connect Google Calendar or Google Drive. Both plugins share the same OAuth app and credentials.
+description: Set up Google OAuth credentials for Corsair. Use when the user wants to connect Google Calendar, Google Drive, or Gmail. All three plugins share the same OAuth app and credentials.
 ---
 
-# Google Key Setup (Calendar + Drive)
+# Google Key Setup (Calendar + Drive + Gmail)
 
 Read `/add-keys` first if you haven't — it explains the key model.
 
 Auth type: **`oauth_2`**
-- Integration level: `client_id`, `client_secret`, `redirect_url` (your Google OAuth app — shared)
+- Integration level: `client_id`, `client_secret`, `redirect_url` (your Google OAuth app — shared across all Google plugins)
 - Account level: `access_token`, `refresh_token` (the user's grant — per-tenant)
 
-Google Calendar and Google Drive share the same OAuth app (same client_id/client_secret), but they are **separate plugins** with separate token stores and separate OAuth flows. Set up only the plugin the user asked for. Tell the user upfront: "Google takes more steps than the others, but it's a one-time setup."
+Google Calendar, Google Drive, and Gmail share the same OAuth app (same client_id/client_secret), but they are **separate plugins** with separate token stores and separate OAuth flows. Set up only the plugin the user asked for. Tell the user upfront: "Google takes more steps than the others, but it's a one-time setup."
 
 ---
 
@@ -28,6 +28,7 @@ Google Calendar and Google Drive share the same OAuth app (same client_id/client
 Go to **APIs & Services → Library**:
 - For Google Calendar: search **Google Calendar API** → **Enable**
 - For Google Drive: search **Google Drive API** → **Enable**
+- For Gmail: search **Gmail API** → **Enable**
 
 ---
 
@@ -55,7 +56,7 @@ Go to **APIs & Services → Credentials → Create Credentials → OAuth client 
 
 **Before running the setup script**, check that the plugin is registered in `server/corsair.ts`. Read the file and verify the plugin is imported and included in the `plugins` array.
 
-For Google Calendar, it should look like:
+For Google Calendar:
 ```typescript
 import { createCorsair, googlecalendar, slack } from 'corsair';
 export const corsair = createCorsair({
@@ -73,15 +74,25 @@ export const corsair = createCorsair({
 });
 ```
 
+For Gmail:
+```typescript
+import { createCorsair, gmail, slack } from 'corsair';
+export const corsair = createCorsair({
+  plugins: [slack(), gmail()],
+  ...
+});
+```
+
 If the plugin is missing, add it now. The container will pick up the change automatically (via hot reload) — no restart needed.
 
 ---
 
 ## 6. Write and run the setup script
 
-Ask the user to provide Client ID and Client Secret. Determine which plugin to set up based on what the user asked for:
+Ask the user to provide Client ID and Client Secret. Set `PLUGIN` based on what the user asked for:
 - Google Calendar → `PLUGIN = 'googlecalendar'`
 - Google Drive → `PLUGIN = 'googledrive'`
+- Gmail → `PLUGIN = 'gmail'`
 
 Then write `scripts/setup-google.ts`:
 
@@ -100,8 +111,8 @@ const CLIENT_ID = '...';
 const CLIENT_SECRET = '...';
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Set to 'googlecalendar' or 'googledrive' depending on what the user asked for
-const PLUGIN = 'googledrive';
+// Set to 'googlecalendar', 'googledrive', or 'gmail' depending on what the user asked for
+const PLUGIN = 'gmail';
 
 async function main() {
   console.log(`\nSetting up ${PLUGIN}...`);
@@ -155,11 +166,8 @@ async function main() {
   await accountKeys.issue_new_dek();
   console.log(`  ✓ Account DEK ready`);
 
-  // 5. Print the correct OAuth URL for this plugin
-  const oauthUrl = PLUGIN === 'googledrive'
-    ? 'http://localhost:3000/oauth/googledrive'
-    : 'http://localhost:3000/oauth/googlecalendar';
-  console.log(`\n✓ Credentials stored. Now complete OAuth at ${oauthUrl}`);
+  // 5. Print the OAuth URL for this plugin
+  console.log(`\n✓ Credentials stored. Now complete OAuth at http://localhost:3000/oauth/${PLUGIN}`);
   process.exit(0);
 }
 
@@ -188,6 +196,7 @@ Tell the user to open the correct URL for the plugin they set up:
 |--------|-----------|
 | Google Calendar | http://localhost:3000/oauth/googlecalendar |
 | Google Drive | http://localhost:3000/oauth/googledrive |
+| Gmail | http://localhost:3000/oauth/gmail |
 
 This will:
 1. Redirect them to Google's consent screen
@@ -208,3 +217,4 @@ No copying tokens manually — the server handles everything.
 **Re-authorizing:** If tokens expire or are revoked, just visit the correct URL for the plugin again:
 - Google Calendar: http://localhost:3000/oauth/googlecalendar
 - Google Drive: http://localhost:3000/oauth/googledrive
+- Gmail: http://localhost:3000/oauth/gmail
