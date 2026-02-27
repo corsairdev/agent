@@ -1,17 +1,17 @@
 ---
 name: add-keys/google
-description: Set up Google OAuth credentials for Corsair. Use when the user wants to connect Google Calendar or Google Drive. Both plugins share the same OAuth app and credentials.
+description: Common Google OAuth setup for Corsair. Contains shared steps used by all Google plugins (Gmail, Google Calendar, Google Drive). Read this when setting up any Google integration — then read the plugin-specific skill for the remaining steps.
 ---
 
-# Google Key Setup (Calendar + Drive)
+# Google OAuth — Common Setup
 
 Read `/add-keys` first if you haven't — it explains the key model.
 
 Auth type: **`oauth_2`**
-- Integration level: `client_id`, `client_secret`, `redirect_url` (your Google OAuth app — shared)
+- Integration level: `client_id`, `client_secret`, `redirect_url` (your Google OAuth app — shared across all Google plugins)
 - Account level: `access_token`, `refresh_token` (the user's grant — per-tenant)
 
-Google Calendar and Google Drive share the same OAuth app (same client_id/client_secret), but they are **separate plugins** with separate token stores and separate OAuth flows. Set up only the plugin the user asked for. Tell the user upfront: "Google takes more steps than the others, but it's a one-time setup."
+Gmail, Google Calendar, and Google Drive share the same OAuth app (same client_id/client_secret), but they are **separate plugins** with separate token stores and separate OAuth flows. Set up only the plugin the user asked for. Tell the user upfront: "Google takes more steps than the others, but it's a one-time setup."
 
 ---
 
@@ -23,15 +23,7 @@ Google Calendar and Google Drive share the same OAuth app (same client_id/client
 
 ---
 
-## 2. Enable APIs
-
-Go to **APIs & Services → Library**:
-- For Google Calendar: search **Google Calendar API** → **Enable**
-- For Google Drive: search **Google Drive API** → **Enable**
-
----
-
-## 3. Configure OAuth consent screen
+## 2. Configure OAuth consent screen
 
 Go to **APIs & Services → OAuth consent screen**:
 1. Choose **External** → **Create**
@@ -42,7 +34,7 @@ Go to **APIs & Services → OAuth consent screen**:
 
 ---
 
-## 4. Create OAuth credentials
+## 3. Create OAuth credentials
 
 Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
 1. Application type: **Web application** → Name: "Corsair"
@@ -51,39 +43,11 @@ Go to **APIs & Services → Credentials → Create Credentials → OAuth client 
 
 ---
 
-## 5. Register the plugin in server/corsair.ts
+## 4. Write and run the setup script
 
-**Before running the setup script**, check that the plugin is registered in `server/corsair.ts`. Read the file and verify the plugin is imported and included in the `plugins` array.
+Ask the user for their Client ID and Client Secret. Fill in `PLUGIN` from the plugin-specific skill (`gmail`, `googlecalendar`, or `googledrive`).
 
-For Google Calendar, it should look like:
-```typescript
-import { createCorsair, googlecalendar, slack } from 'corsair';
-export const corsair = createCorsair({
-  plugins: [slack(), googlecalendar()],
-  ...
-});
-```
-
-For Google Drive:
-```typescript
-import { createCorsair, googledrive, slack } from 'corsair';
-export const corsair = createCorsair({
-  plugins: [slack(), googledrive()],
-  ...
-});
-```
-
-If the plugin is missing, add it now. The container will pick up the change automatically (via hot reload) — no restart needed.
-
----
-
-## 6. Write and run the setup script
-
-Ask the user to provide Client ID and Client Secret. Determine which plugin to set up based on what the user asked for:
-- Google Calendar → `PLUGIN = 'googlecalendar'`
-- Google Drive → `PLUGIN = 'googledrive'`
-
-Then write `scripts/setup-google.ts`:
+Write `scripts/setup-google.ts`:
 
 ```typescript
 import 'dotenv/config';
@@ -100,8 +64,8 @@ const CLIENT_ID = '...';
 const CLIENT_SECRET = '...';
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Set to 'googlecalendar' or 'googledrive' depending on what the user asked for
-const PLUGIN = 'googledrive';
+// Set to 'googlecalendar', 'googledrive', or 'gmail'
+const PLUGIN = '...';
 
 async function main() {
   console.log(`\nSetting up ${PLUGIN}...`);
@@ -155,11 +119,7 @@ async function main() {
   await accountKeys.issue_new_dek();
   console.log(`  ✓ Account DEK ready`);
 
-  // 5. Print the correct OAuth URL for this plugin
-  const oauthUrl = PLUGIN === 'googledrive'
-    ? 'http://localhost:3000/oauth/googledrive'
-    : 'http://localhost:3000/oauth/googlecalendar';
-  console.log(`\n✓ Credentials stored. Now complete OAuth at ${oauthUrl}`);
+  console.log(`\n✓ Credentials stored. Now complete OAuth at http://localhost:3000/oauth/${PLUGIN}`);
   process.exit(0);
 }
 
@@ -180,20 +140,13 @@ rm scripts/setup-google.ts
 
 ---
 
-## 7. Complete the OAuth flow
+## 5. Complete the OAuth flow
 
-Tell the user to open the correct URL for the plugin they set up:
-
-| Plugin | OAuth URL |
-|--------|-----------|
-| Google Calendar | http://localhost:3000/oauth/googlecalendar |
-| Google Drive | http://localhost:3000/oauth/googledrive |
-
-This will:
+Tell the user to open the OAuth URL for the plugin they set up (listed in the plugin-specific skill). The flow will:
 1. Redirect them to Google's consent screen
 2. After they click Allow, redirect back to `/oauth/callback`
-3. Automatically exchange the code for tokens and store both `access_token` and `refresh_token` for the correct plugin
-4. Show a success page naming the correct plugin
+3. Automatically exchange the code for tokens and store both `access_token` and `refresh_token`
+4. Show a success page
 
 No copying tokens manually — the server handles everything.
 
@@ -201,10 +154,8 @@ No copying tokens manually — the server handles everything.
 
 ## Notes
 
-**Token refresh:** The plugin calls `getValidAccessToken()` internally on every request, using the stored `refresh_token` + `client_id` + `client_secret` to get a fresh access token. However, it also requires an `access_token` to be stored — the OAuth flow at step 6 stores both.
+**Token refresh:** The plugin calls `getValidAccessToken()` internally on every request, using the stored `refresh_token` + `client_id` + `client_secret` to get a fresh access token.
 
 **Token expiry (test mode):** Google OAuth refresh tokens for apps in test mode expire after 7 days of inactivity. To avoid this, publish the app: **OAuth consent screen → Publish App**. The unverified app warning during login is fine for personal use.
 
-**Re-authorizing:** If tokens expire or are revoked, just visit the correct URL for the plugin again:
-- Google Calendar: http://localhost:3000/oauth/googlecalendar
-- Google Drive: http://localhost:3000/oauth/googledrive
+**Re-authorizing:** If tokens expire or are revoked, just visit the plugin's OAuth URL again (listed in the plugin-specific skill).
