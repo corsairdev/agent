@@ -205,15 +205,18 @@ async function main() {
 
 	const GOOGLE_PLUGIN_CONFIG = {
 		googlecalendar: {
-			scope: 'https://www.googleapis.com/auth/calendar',
+			scope: ['https://www.googleapis.com/auth/calendar'],
 			label: 'Google Calendar',
 		},
 		googledrive: {
-			scope: 'https://www.googleapis.com/auth/drive',
+			scope: ['https://www.googleapis.com/auth/drive'],
 			label: 'Google Drive',
 		},
 		gmail: {
-			scope: 'https://mail.google.com/',
+			scope:[ 'https://www.googleapis.com/auth/gmail.modify',
+					'https://www.googleapis.com/auth/gmail.labels',
+					'https://www.googleapis.com/auth/gmail.send',
+					'https://www.googleapis.com/auth/gmail.compose'],
 			label: 'Gmail',
 		},
 	} as const;
@@ -233,7 +236,7 @@ async function main() {
 			url.searchParams.set('client_id', creds.client_id);
 			url.searchParams.set('redirect_uri', creds.redirect_url);
 			url.searchParams.set('response_type', 'code');
-			url.searchParams.set('scope', GOOGLE_PLUGIN_CONFIG[plugin].scope);
+			url.searchParams.set('scope', GOOGLE_PLUGIN_CONFIG[plugin].scope.join(' '));
 			url.searchParams.set('access_type', 'offline');
 			url.searchParams.set('prompt', 'consent');
 			url.searchParams.set('state', plugin);
