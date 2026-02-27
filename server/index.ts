@@ -3,6 +3,7 @@ import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import { processWebhook } from 'corsair';
 import { asc, eq } from 'drizzle-orm';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import type { SimpleMessage } from './agent';
 import { runAgent, WORKFLOW_FAILURE_PROMPT } from './agent';
 import { corsair } from './corsair';
@@ -221,6 +222,13 @@ async function main() {
 		},
 	} as const;
 
+	const oauthLimiter = rateLimit({
+		windowMs: 15 * 60 * 1000, // 15 minutes
+		max: 20, // limit each IP to 20 OAuth requests per window
+		standardHeaders: true,
+		legacyHeaders: false,
+	});
+
 	async function startGoogleOAuth(
 		plugin: keyof typeof GOOGLE_PLUGIN_CONFIG,
 		res: import('express').Response,
@@ -248,13 +256,19 @@ async function main() {
 		}
 	}
 
-	app.get('/oauth/googlecalendar', (req, res) => startGoogleOAuth('googlecalendar', res));
-	app.get('/oauth/googledrive', (req, res) => startGoogleOAuth('googledrive', res));
-	app.get('/oauth/gmail', (req, res) => startGoogleOAuth('gmail', res));
+	app.get('/oauth/googlecalendar', oauthLimiter, (req, res) =>
+		startGoogleOAuth('googlecalendar', res),
+	);
+	app.get('/oauth/googledrive', oauthLimiter, (req, res) =>
+		startGoogleOAuth('googledrive', res),
+	);
+	app.get('/oauth/gmail', oauthLimiter, (req, res) =>
+		startGoogleOAuth('gmail', res),
+	);
 
 	// ── Spotify OAuth flow ────────────────────────────────────────────────────
 
-	app.get('/oauth/spotify', async (req, res) => {
+	app.get('/oauth/spotify', oauthLimiter, async (req, res) => {
 		try {
 			const creds = await corsair.spotify.keys.get_integration_credentials();
 			if (!creds.client_id || !creds.redirect_url) {
