@@ -216,3 +216,5 @@ Each plugin has its own skill with the exact script to run:
 | Discord | `api_key` | `/add-keys/discord` |
 | Google Calendar | `oauth_2` | `/add-keys/google` |
 | Google Drive | `oauth_2` | `/add-keys/google` (shares credentials with Calendar) |
+| Todoist | `api_key` | `/add-keys/todoist` |
+| Notion | `api_key` | `/add-keys/notion` |
