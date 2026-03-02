@@ -3,6 +3,7 @@ import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import { processWebhook } from 'corsair';
 import { asc, eq } from 'drizzle-orm';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import type { SimpleMessage } from './agent';
 import { runAgent, WORKFLOW_FAILURE_PROMPT } from './agent';
 import { corsair } from './corsair';
@@ -205,14 +206,28 @@ async function main() {
 
 	const GOOGLE_PLUGIN_CONFIG = {
 		googlecalendar: {
-			scope: 'https://www.googleapis.com/auth/calendar',
+			scope: ['https://www.googleapis.com/auth/calendar'],
 			label: 'Google Calendar',
 		},
 		googledrive: {
-			scope: 'https://www.googleapis.com/auth/drive',
+			scope: ['https://www.googleapis.com/auth/drive'],
 			label: 'Google Drive',
 		},
+		gmail: {
+			scope:[ 'https://www.googleapis.com/auth/gmail.modify',
+					'https://www.googleapis.com/auth/gmail.labels',
+					'https://www.googleapis.com/auth/gmail.send',
+					'https://www.googleapis.com/auth/gmail.compose'],
+			label: 'Gmail',
+		},
 	} as const;
+
+	const oauthLimiter = rateLimit({
+		windowMs: 15 * 60 * 1000, // 15 minutes
+		max: 20, // limit each IP to 20 OAuth requests per window
+		standardHeaders: true,
+		legacyHeaders: false,
+	});
 
 	async function startGoogleOAuth(
 		plugin: keyof typeof GOOGLE_PLUGIN_CONFIG,
@@ -229,7 +244,7 @@ async function main() {
 			url.searchParams.set('client_id', creds.client_id);
 			url.searchParams.set('redirect_uri', creds.redirect_url);
 			url.searchParams.set('response_type', 'code');
-			url.searchParams.set('scope', GOOGLE_PLUGIN_CONFIG[plugin].scope);
+			url.searchParams.set('scope', GOOGLE_PLUGIN_CONFIG[plugin].scope.join(' '));
 			url.searchParams.set('access_type', 'offline');
 			url.searchParams.set('prompt', 'consent');
 			url.searchParams.set('state', plugin);
@@ -241,8 +256,51 @@ async function main() {
 		}
 	}
 
-	app.get('/oauth/googlecalendar', (req, res) => startGoogleOAuth('googlecalendar', res));
-	app.get('/oauth/googledrive', (req, res) => startGoogleOAuth('googledrive', res));
+	app.get('/oauth/googlecalendar', oauthLimiter, (req, res) =>
+		startGoogleOAuth('googlecalendar', res),
+	);
+	app.get('/oauth/googledrive', oauthLimiter, (req, res) =>
+		startGoogleOAuth('googledrive', res),
+	);
+	app.get('/oauth/gmail', oauthLimiter, (req, res) =>
+		startGoogleOAuth('gmail', res),
+	);
+
+	// ── Spotify OAuth flow ────────────────────────────────────────────────────
+
+	app.get('/oauth/spotify', oauthLimiter, async (req, res) => {
+		try {
+			const creds = await corsair.spotify.keys.get_integration_credentials();
+			if (!creds.client_id || !creds.redirect_url) {
+				res.status(400).send('Spotify not configured. Run the setup script first.');
+				return;
+			}
+			const url = new URL('https://accounts.spotify.com/authorize');
+			url.searchParams.set('client_id', creds.client_id);
+			url.searchParams.set('redirect_uri', creds.redirect_url);
+			url.searchParams.set('response_type', 'code');
+			url.searchParams.set('scope', [
+				'user-read-playback-state',
+				'user-modify-playback-state',
+				'user-read-currently-playing',
+				'playlist-read-private',
+				'playlist-read-collaborative',
+				'playlist-modify-public',
+				'playlist-modify-private',
+				'user-library-read',
+				'user-library-modify',
+				'user-read-private',
+				'user-read-email',
+				'user-top-read',
+			].join(' '));
+			url.searchParams.set('state', 'spotify');
+			console.log('[oauth] Redirecting to Spotify consent screen');
+			res.redirect(url.toString());
+		} catch (err) {
+			console.error('[oauth] Failed to build Spotify auth URL:', err);
+			res.status(500).send('OAuth setup error — check server logs.');
+		}
+	});
 
 	app.get('/oauth/callback', async (req, res) => {
 		const { code, error, state } = req.query as { code?: string; error?: string; state?: string };
@@ -256,6 +314,65 @@ async function main() {
 			return;
 		}
 
+		// ── Spotify callback ──────────────────────────────────────────────────
+		if (state === 'spotify') {
+			try {
+				const pluginKeys = corsair.spotify.keys;
+				const creds = await pluginKeys.get_integration_credentials();
+				if (!creds.client_id || !creds.client_secret || !creds.redirect_url) {
+					res.status(400).send('Missing Spotify credentials.');
+					return;
+				}
+				const basic = Buffer.from(`${creds.client_id}:${creds.client_secret}`).toString('base64');
+				const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+					method: 'POST',
+					headers: {
+						Authorization: `Basic ${basic}`,
+						'Content-Type': 'application/x-www-form-urlencoded',
+					},
+					body: new URLSearchParams({
+						code,
+						redirect_uri: creds.redirect_url,
+						grant_type: 'authorization_code',
+					}),
+				});
+				if (!tokenRes.ok) {
+					const err = await tokenRes.text();
+					console.error('[oauth] Spotify token exchange failed:', err);
+					res.status(500).send(`Token exchange failed: ${err}`);
+					return;
+				}
+				const tokens = await tokenRes.json() as {
+					access_token: string;
+					refresh_token?: string;
+					expires_in: number;
+					scope: string;
+				};
+				await pluginKeys.set_access_token(tokens.access_token);
+				if (tokens.refresh_token) await pluginKeys.set_refresh_token(tokens.refresh_token);
+				await pluginKeys.set_expires_at(new Date(Date.now() + tokens.expires_in * 1000).toISOString());
+				await pluginKeys.set_scope(tokens.scope);
+				console.log('[oauth] Spotify tokens stored successfully');
+				res.setHeader('Content-Type', 'text/html').send(`
+					<!DOCTYPE html>
+					<html>
+					<head><title>Spotify Connected</title></head>
+					<body style="font-family:-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#0a0a0a;color:#e8e8e8">
+						<div style="text-align:center;background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:40px 48px;max-width:400px">
+							<div style="font-size:48px;margin-bottom:16px">✅</div>
+							<h1 style="margin:0 0 8px;font-size:20px">Spotify connected!</h1>
+							<p style="color:#888;margin:0">You can close this tab. Your agent is ready to use Spotify.</p>
+						</div>
+					</body>
+					</html>`);
+			} catch (err) {
+				console.error('[oauth] Spotify callback error:', err);
+				res.status(500).send('OAuth callback error — check server logs.');
+			}
+			return;
+		}
+
+		// ── Google callback ───────────────────────────────────────────────────
 		const plugin = (state && state in GOOGLE_PLUGIN_CONFIG)
 			? (state as keyof typeof GOOGLE_PLUGIN_CONFIG)
 			: 'googlecalendar';

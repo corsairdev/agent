@@ -21,8 +21,8 @@ importers:
         specifier: ^4.0.3
         version: 4.0.3
       corsair:
-        specifier: 0.1.13
-        version: 0.1.13
+        specifier: 0.1.16
+        version: 0.1.16
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
@@ -32,6 +32,9 @@ importers:
       express:
         specifier: ^4.21.0
         version: 4.22.1
+      express-rate-limit:
+        specifier: ^7.0.0
+        version: 7.5.1(express@4.22.1)
       grammy:
         specifier: ^1.39.3
         version: 1.40.0(encoding@0.1.13)
@@ -1525,8 +1528,8 @@ packages:
     resolution: {integrity: sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==}
     engines: {node: '>= 0.6'}
 
-  corsair@0.1.13:
-    resolution: {integrity: sha512-BcTK4DuPzNXbhYZ3Qu6b1BIH0dO1+VTScz2m/1BQs3Et35IIQv9uMJhI24Ij07kN4IPJ7YDnS37kFkET4fry9Q==}
+  corsair@0.1.16:
+    resolution: {integrity: sha512-RDhlhEiO6DSnoEqamz/p3f6tzNpHPlxtOWDu9ukAFNTJr4gPct9hpq2yfpgfuAed67TKvIJU86kGl7vHu8rWew==}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -1827,6 +1830,12 @@ packages:
   expect@29.7.0:
     resolution: {integrity: sha512-2Zks0hf1VLFYI1kbh0I5jP3KHHyCHpkfyHBzsSXRFgl/Bg9mWYfMW8oD+PdMPlEwy5HNsR9JutYy6pMeOh61nw==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
+
+  express-rate-limit@7.5.1:
+    resolution: {integrity: sha512-7iN8iPMDzOMHPUYllBEsQdWVB6fPDMPqwjBaFrgr4Jgr/+okjvzAy+UHlYYL/Vs0OsOrMkwS6PJDkFlJwoxUnw==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express: '>= 4.11'
 
   express@4.22.1:
     resolution: {integrity: sha512-F2X8g9P1X7uCPZMA3MVf9wcTqlyNp7IhH5qPCI0izhaOIYXaW9L535tGA3qmjRzpH+bZczqq7hVKxTR4NWnu+g==}
@@ -4432,7 +4441,7 @@ snapshots:
 
   cookie@0.7.2: {}
 
-  corsair@0.1.13:
+  corsair@0.1.16:
     dependencies:
       kysely: 0.28.11
       uuid: 13.0.0
@@ -4686,6 +4695,10 @@ snapshots:
       jest-matcher-utils: 29.7.0
       jest-message-util: 29.7.0
       jest-util: 29.7.0
+
+  express-rate-limit@7.5.1(express@4.22.1):
+    dependencies:
+      express: 4.22.1
 
   express@4.22.1:
     dependencies:
