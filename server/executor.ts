@@ -38,11 +38,13 @@ export async function executeWorkflow(
 	const wrappedCode = `
 import { corsair } from './server/corsair';
 const __event: unknown = ${JSON.stringify(eventPayload ?? null)};
+const ctx = { sdk: corsair };
 
 ${code}
 
-// Execute the workflow
-${workflowId}().catch(console.error);
+// Execute the workflow — pass ctx and the event payload so workflow functions
+// can use either ctx.sdk.<plugin> or the top-level corsair import directly.
+${workflowId}(ctx, __event).catch(console.error);
 `;
 
 	try {

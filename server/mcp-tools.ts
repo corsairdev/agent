@@ -139,7 +139,17 @@ export function createMcpServer(): McpServer {
 
 	server.tool(
 		'manage_workflows',
-		'List, create, update, or delete Corsair workflows. Use action="create" with webhookTrigger to register a webhook-triggered workflow, or cronSchedule for a cron workflow.',
+		`List, create, update, or delete Corsair workflows. Use action="create" with webhookTrigger to register a webhook-triggered workflow, or cronSchedule for a cron workflow.
+
+WORKFLOW CODE CONTRACT:
+- The workflow function receives two arguments: ctx and payload.
+  - ctx.sdk is the full corsair SDK (same as the corsair import), e.g. ctx.sdk.slack.api.messages.post(...)
+  - payload is the raw webhook event payload (for webhook-triggered workflows) or undefined (for cron/manual).
+- Function signature: async function <workflowId>(ctx: { sdk: typeof import('./corsair').corsair }, payload?: unknown)
+- Example:
+  async function myWorkflow(ctx, payload) {
+    await ctx.sdk.slack.api.messages.post({ channel: 'C12345', text: 'hello' });
+  }`,
 		{
 			action: z.enum(['list', 'create', 'update', 'delete']).describe('Action to perform'),
 			triggerType: z

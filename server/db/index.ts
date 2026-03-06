@@ -1,11 +1,14 @@
 import { config } from 'dotenv';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 import * as schema from './schema';
 
 // Load env as early as possible (import order matters with ESM).
-config({ path: '.env' });
+// Use an absolute path so this works regardless of cwd (e.g. when spawned by Claude Desktop MCP).
+config({ path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env') });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection (shared with Corsair)
