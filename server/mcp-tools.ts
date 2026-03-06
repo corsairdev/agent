@@ -18,6 +18,7 @@ export function createMcpServer(): McpServer {
 	const server = new McpServer({
 		name: 'corsair',
 		version: '1.0.0',
+		description: 'Use this to interact with the Corsair API. Corsair helps you integrate with dozens of tools and services. You can setup cron jobs and webhooks triggered jobs.'
 	});
 
 	// ─────────────────────────────────────────────────────────────────────────

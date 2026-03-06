@@ -6,7 +6,7 @@ const mcp = getCorsairMcp();
 
 const agent = new Agent({
 	name: 'Corsair Agent',
-	model: 'gpt-4o',
+	model: 'gpt-4.1',
 	instructions: 'You are a helpful assistant with access to Corsair tools.',
 	tools: [
 		hostedMcpTool({
