@@ -11,9 +11,15 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.52
         version: 0.2.52(zod@3.25.76)
+      '@anthropic-ai/sdk':
+        specifier: ^0.78.0
+        version: 0.78.0(zod@3.25.76)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)
+      '@openai/agents':
+        specifier: ^0.5.4
+        version: 0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)
       '@trpc/server':
         specifier: ^11.10.0
         version: 11.10.0(typescript@5.9.3)
@@ -40,7 +46,7 @@ importers:
         version: 1.40.0(encoding@0.1.13)
       mem0ai:
         specifier: ^2.2.3
-        version: 2.2.3(@anthropic-ai/sdk@0.55.1)(@azure/identity@4.13.0)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260302.0)(@google/genai@1.42.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(encoding@0.1.13)(ws@8.19.0)(zod@3.25.76)))(@mistralai/mistralai@1.14.0)(@qdrant/js-client-rest@1.13.0(typescript@5.9.3))(@supabase/supabase-js@2.97.0)(@types/jest@29.5.14)(@types/pg@8.16.0)(@types/sqlite3@3.1.11)(cloudflare@4.5.0(encoding@0.1.13))(encoding@0.1.13)(groq-sdk@0.3.0(encoding@0.1.13))(neo4j-driver@5.28.3)(ollama@0.5.18)(pg@8.18.0)(redis@4.7.1)(sqlite3@5.1.7)(ws@8.19.0)
+        version: 2.2.3(@anthropic-ai/sdk@0.78.0(zod@3.25.76))(@azure/identity@4.13.0)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260302.0)(@google/genai@1.42.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@6.27.0(ws@8.19.0)(zod@3.25.76)))(@mistralai/mistralai@1.14.0)(@qdrant/js-client-rest@1.13.0(typescript@5.9.3))(@supabase/supabase-js@2.97.0)(@types/jest@29.5.14)(@types/pg@8.16.0)(@types/sqlite3@3.1.11)(cloudflare@4.5.0(encoding@0.1.13))(encoding@0.1.13)(groq-sdk@0.3.0(encoding@0.1.13))(neo4j-driver@5.28.3)(ollama@0.5.18)(pg@8.18.0)(redis@4.7.1)(sqlite3@5.1.7)(ws@8.19.0)
       node-cron:
         specifier: ^4.2.1
         version: 4.2.1
@@ -87,9 +93,14 @@ packages:
     peerDependencies:
       zod: ^4.0.0
 
-  '@anthropic-ai/sdk@0.55.1':
-    resolution: {integrity: sha512-gjOMS4chmm8BxClKmCjNHmvf1FrO1Cn++CSX6K3YCZjz5JG4I9ZttQ/xEH4FBsz6HQyZvnUpiKlOAkmxaGmEaQ==}
+  '@anthropic-ai/sdk@0.78.0':
+    resolution: {integrity: sha512-PzQhR715td/m1UaaN5hHXjYB8Gl2lF9UVhrrGrZeysiF6Rb74Wc9GCB8hzLdzmQtBd1qe89F9OptgB9Za1Ib5w==}
     hasBin: true
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
 
   '@azure/abort-controller@2.1.2':
     resolution: {integrity: sha512-nBrLsEWm4J2u5LpAPjxADTlq3trDgVZZXHNKabeXZtpq3d3AbN/KGO82R87rdDz5/lYB024rtEf10/q0urNgsA==}
@@ -156,6 +167,10 @@ packages:
 
   '@babel/helper-validator-identifier@7.28.5':
     resolution: {integrity: sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q==}
+    engines: {node: '>=6.9.0'}
+
+  '@babel/runtime@7.28.6':
+    resolution: {integrity: sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA==}
     engines: {node: '>=6.9.0'}
 
   '@biomejs/biome@2.3.5':
@@ -908,6 +923,29 @@ packages:
     resolution: {integrity: sha512-1SUf/Cg2GzGDyaf15aR9St9TWlb+XvbZXWpDx8YKs7MLzMH/BCeopv+y9vzrzgkfykCGuWOlSu3mZhj2+FQcrg==}
     engines: {node: '>=10'}
     deprecated: This functionality has been moved to @npmcli/fs
+
+  '@openai/agents-core@0.5.4':
+    resolution: {integrity: sha512-qAT9zGIIM7GT5/WGkLpp8Fuar7NL5qu30b5+o2jP3mE6aMfx9OZjdj0za/iYLeV5kzQ5pOcbvRXenfzHrhvd/A==}
+    peerDependencies:
+      zod: ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+
+  '@openai/agents-openai@0.5.4':
+    resolution: {integrity: sha512-1uDEu9iwM7oB3oWNxvT/yzkcr7WtjHe1ekbQOAsasEv9S0MKTT8uP2kknRVgxzgw+awTZBrhO2vfGhD1iKinuQ==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@openai/agents-realtime@0.5.4':
+    resolution: {integrity: sha512-qlrhMWD3Xpzfrxplt/jvc1nlGtjNnRmyzgRAj6J5HX/bcnP0W4UdYHEJOreiIC8inj27kcVjQslyu0DAjVuXsA==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@openai/agents@0.5.4':
+    resolution: {integrity: sha512-INstpf2vZ0rV6Zq9jcSzqq/oL2/D84YGGKCXnU2otAcQ0ji/VZm+zplDow/+oENnvKiXKdVtOrGMsXqNFL7W+Q==}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -2245,6 +2283,10 @@ packages:
   json-bigint@1.0.0:
     resolution: {integrity: sha512-SiPv/8VpZuWbvLSMtTDU8hEfrZWg/mH/nV/b4o0CYbSxu1UIQPLdwKOCIyLQX+VIPO5vrLX3i8qtqFyhdPSUSQ==}
 
+  json-schema-to-ts@3.1.1:
+    resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
+    engines: {node: '>=16'}
+
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
@@ -2585,6 +2627,18 @@ packages:
     peerDependencies:
       ws: ^8.18.0
       zod: ^3.23.8
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
+
+  openai@6.27.0:
+    resolution: {integrity: sha512-osTKySlrdYrLYTt0zjhY8yp0JUBmWDCN+Q+QxsV4xMQnnoVFpylgKGgxwN8sSdTNw0G4y+WUXs4eCMWpyDNWZQ==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
     peerDependenciesMeta:
       ws:
         optional: true
@@ -3083,6 +3137,9 @@ packages:
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
 
+  ts-algebra@2.0.0:
+    resolution: {integrity: sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==}
+
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
@@ -3322,7 +3379,11 @@ snapshots:
       '@img/sharp-win32-arm64': 0.34.5
       '@img/sharp-win32-x64': 0.34.5
 
-  '@anthropic-ai/sdk@0.55.1': {}
+  '@anthropic-ai/sdk@0.78.0(zod@3.25.76)':
+    dependencies:
+      json-schema-to-ts: 3.1.1
+    optionalDependencies:
+      zod: 3.25.76
 
   '@azure/abort-controller@2.1.2':
     dependencies:
@@ -3439,6 +3500,8 @@ snapshots:
       picocolors: 1.1.1
 
   '@babel/helper-validator-identifier@7.28.5': {}
+
+  '@babel/runtime@7.28.6': {}
 
   '@biomejs/biome@2.3.5':
     optionalDependencies:
@@ -3900,14 +3963,14 @@ snapshots:
 
   '@keyv/serialize@1.1.1': {}
 
-  '@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(encoding@0.1.13)(ws@8.19.0)(zod@3.25.76))':
+  '@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@6.27.0(ws@8.19.0)(zod@3.25.76))':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       ansi-styles: 5.2.0
       camelcase: 6.3.0
       decamelize: 1.2.0
       js-tiktoken: 1.0.21
-      langsmith: 0.3.87(@opentelemetry/api@1.9.0)(openai@4.104.0(encoding@0.1.13)(ws@8.19.0)(zod@3.25.76))
+      langsmith: 0.3.87(@opentelemetry/api@1.9.0)(openai@6.27.0(ws@8.19.0)(zod@3.25.76))
       mustache: 4.2.0
       p-queue: 6.6.2
       p-retry: 4.6.2
@@ -3964,6 +4027,57 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
     optional: true
+
+  '@openai/agents-core@0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)':
+    dependencies:
+      debug: 4.4.3
+      openai: 6.27.0(ws@8.19.0)(zod@3.25.76)
+    optionalDependencies:
+      '@modelcontextprotocol/sdk': 1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+      - ws
+
+  '@openai/agents-openai@0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)':
+    dependencies:
+      '@openai/agents-core': 0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)
+      debug: 4.4.3
+      openai: 6.27.0(ws@8.19.0)(zod@3.25.76)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+      - ws
+
+  '@openai/agents-realtime@0.5.4(@cfworker/json-schema@4.1.1)(zod@3.25.76)':
+    dependencies:
+      '@openai/agents-core': 0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)
+      '@types/ws': 8.18.1
+      debug: 4.4.3
+      ws: 8.19.0
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  '@openai/agents@0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)':
+    dependencies:
+      '@openai/agents-core': 0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)
+      '@openai/agents-openai': 0.5.4(@cfworker/json-schema@4.1.1)(ws@8.19.0)(zod@3.25.76)
+      '@openai/agents-realtime': 0.5.4(@cfworker/json-schema@4.1.1)(zod@3.25.76)
+      debug: 4.4.3
+      openai: 6.27.0(ws@8.19.0)(zod@3.25.76)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
 
   '@opentelemetry/api@1.9.0':
     optional: true
@@ -5407,6 +5521,11 @@ snapshots:
     dependencies:
       bignumber.js: 9.3.1
 
+  json-schema-to-ts@3.1.1:
+    dependencies:
+      '@babel/runtime': 7.28.6
+      ts-algebra: 2.0.0
+
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
@@ -5441,7 +5560,7 @@ snapshots:
 
   kysely@0.28.11: {}
 
-  langsmith@0.3.87(@opentelemetry/api@1.9.0)(openai@4.104.0(encoding@0.1.13)(ws@8.19.0)(zod@3.25.76)):
+  langsmith@0.3.87(@opentelemetry/api@1.9.0)(openai@6.27.0(ws@8.19.0)(zod@3.25.76)):
     dependencies:
       '@types/uuid': 10.0.0
       chalk: 4.1.2
@@ -5451,7 +5570,7 @@ snapshots:
       uuid: 10.0.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
-      openai: 4.104.0(encoding@0.1.13)(ws@8.19.0)(zod@3.25.76)
+      openai: 6.27.0(ws@8.19.0)(zod@3.25.76)
 
   lodash.includes@4.3.0: {}
 
@@ -5521,14 +5640,14 @@ snapshots:
 
   media-typer@1.1.0: {}
 
-  mem0ai@2.2.3(@anthropic-ai/sdk@0.55.1)(@azure/identity@4.13.0)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260302.0)(@google/genai@1.42.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(encoding@0.1.13)(ws@8.19.0)(zod@3.25.76)))(@mistralai/mistralai@1.14.0)(@qdrant/js-client-rest@1.13.0(typescript@5.9.3))(@supabase/supabase-js@2.97.0)(@types/jest@29.5.14)(@types/pg@8.16.0)(@types/sqlite3@3.1.11)(cloudflare@4.5.0(encoding@0.1.13))(encoding@0.1.13)(groq-sdk@0.3.0(encoding@0.1.13))(neo4j-driver@5.28.3)(ollama@0.5.18)(pg@8.18.0)(redis@4.7.1)(sqlite3@5.1.7)(ws@8.19.0):
+  mem0ai@2.2.3(@anthropic-ai/sdk@0.78.0(zod@3.25.76))(@azure/identity@4.13.0)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260302.0)(@google/genai@1.42.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)))(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@6.27.0(ws@8.19.0)(zod@3.25.76)))(@mistralai/mistralai@1.14.0)(@qdrant/js-client-rest@1.13.0(typescript@5.9.3))(@supabase/supabase-js@2.97.0)(@types/jest@29.5.14)(@types/pg@8.16.0)(@types/sqlite3@3.1.11)(cloudflare@4.5.0(encoding@0.1.13))(encoding@0.1.13)(groq-sdk@0.3.0(encoding@0.1.13))(neo4j-driver@5.28.3)(ollama@0.5.18)(pg@8.18.0)(redis@4.7.1)(sqlite3@5.1.7)(ws@8.19.0):
     dependencies:
-      '@anthropic-ai/sdk': 0.55.1
+      '@anthropic-ai/sdk': 0.78.0(zod@3.25.76)
       '@azure/identity': 4.13.0
       '@azure/search-documents': 12.2.0
       '@cloudflare/workers-types': 4.20260302.0
       '@google/genai': 1.42.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76))
-      '@langchain/core': 0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(encoding@0.1.13)(ws@8.19.0)(zod@3.25.76))
+      '@langchain/core': 0.3.80(@opentelemetry/api@1.9.0)(openai@6.27.0(ws@8.19.0)(zod@3.25.76))
       '@mistralai/mistralai': 1.14.0
       '@qdrant/js-client-rest': 1.13.0(typescript@5.9.3)
       '@supabase/supabase-js': 2.97.0
@@ -5772,6 +5891,11 @@ snapshots:
       zod: 3.25.76
     transitivePeerDependencies:
       - encoding
+
+  openai@6.27.0(ws@8.19.0)(zod@3.25.76):
+    optionalDependencies:
+      ws: 8.19.0
+      zod: 3.25.76
 
   p-finally@1.0.0: {}
 
@@ -6399,6 +6523,8 @@ snapshots:
       ieee754: 1.2.1
 
   tr46@0.0.3: {}
+
+  ts-algebra@2.0.0: {}
 
   tslib@2.8.1: {}
 

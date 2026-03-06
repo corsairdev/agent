@@ -207,3 +207,5 @@ state.txt
 **/fixtures
 
 /store
+
+.claude/settings.local.json

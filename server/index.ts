@@ -6,6 +6,7 @@ import express from 'express';
 import type { SimpleMessage } from './agent';
 import { runAgent, WORKFLOW_FAILURE_PROMPT } from './agent';
 import { corsair } from './corsair';
+import { createMcpRouter } from './mcp-http';
 import {
 	db,
 	permissions,
@@ -319,6 +320,9 @@ async function main() {
 			res.status(500).send('OAuth callback error — check server logs.');
 		}
 	});
+
+	// ── MCP HTTP server (OpenAI / Anthropic agent integration) ───────────────
+	app.use('/mcp', createMcpRouter());
 
 	// ── tRPC router ───────────────────────────────────────────────────────────
 	app.use(
