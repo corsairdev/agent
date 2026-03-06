@@ -24,7 +24,9 @@
     "available-plugins": "tsx scripts/available-plugins.ts",
     "test:mcp": "tsx scripts/test-mcp.ts",
     "test:openai": "tsx scripts/test-openai.ts",
-    "test:claude-sdk": "tsx scripts/test-claude-sdk.ts"
+    "test:claude-sdk": "tsx scripts/test-claude-sdk.ts",
+    "test:webhook": "tsx scripts/test-webhook.ts",
+    "test:cron": "tsx scripts/test-cron.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.52",

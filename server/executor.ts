@@ -327,6 +327,8 @@ export async function listWorkflows(
 	}));
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function findWorkflowByNameOrId(nameOrId: string) {
 	const byName = await db
 		.select()
@@ -334,6 +336,8 @@ export async function findWorkflowByNameOrId(nameOrId: string) {
 		.where(eq(workflows.name, nameOrId))
 		.limit(1);
 	if (byName[0]) return byName[0];
+
+	if (!UUID_RE.test(nameOrId)) return null;
 
 	const byId = await db
 		.select()

@@ -67,3 +67,138 @@ export function getCorsairMcp(): CorsairMcp {
 		process.env.BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
 	return { type: 'http', url: `${baseUrl}/mcp`, headers: {} };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// workflow — programmatic webhook & cron registration
+//
+// Usage:
+//   import { workflow } from './server/sdk';
+//
+//   await workflow.webhook({
+//     id: 'myWebhook',
+//     trigger: { plugin: 'slack', action: 'messages.message' },
+//     handler: async (event: any) => {
+//       await corsair.slack.api.messages.post({ channel: 'C123', text: event.text });
+//     },
+//   });
+//
+//   await workflow.cron({
+//     id: 'myReport',
+//     schedule: '0 9 * * 1-5',
+//     handler: async () => {
+//       await corsair.slack.api.messages.post({ channel: 'C123', text: 'Morning!' });
+//     },
+//   });
+//
+// Note: handlers run inside the server process via tsx. `corsair` is injected
+// automatically — import it in your script only for type safety, not for runtime.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import {
+	archiveWorkflow,
+	findWorkflowByNameOrId,
+	listWorkflows,
+	storeWorkflow,
+	updateWorkflowRecord,
+} from './executor';
+import { registerCronWorkflow } from './workflow-scheduler';
+
+function serializeWebhookHandler(id: string, fn: (event: unknown) => Promise<void>): string {
+	return [
+		`export async function ${id}() {`,
+		`  // Handles both Slack's { event: {...} } wrapper and flat payloads`,
+		`  const __payload = (__event as any)?.event ?? __event;`,
+		`  const __handler = ${fn.toString()};`,
+		`  return __handler(__payload);`,
+		`}`,
+	].join('\n');
+}
+
+function serializeCronHandler(id: string, fn: () => Promise<void>): string {
+	return [
+		`export async function ${id}() {`,
+		`  const __handler = ${fn.toString()};`,
+		`  return __handler();`,
+		`}`,
+	].join('\n');
+}
+
+export const workflow = {
+	/**
+	 * Register or update a webhook-triggered workflow.
+	 * The handler is serialized and stored in the DB. `corsair` is available as a global.
+	 */
+	async webhook<T = unknown>(opts: {
+		id: string;
+		description?: string;
+		trigger: { plugin: string; action: string };
+		handler: (event: T) => Promise<void>;
+	}) {
+		const code = serializeWebhookHandler(opts.id, opts.handler as (event: unknown) => Promise<void>);
+		const existing = await findWorkflowByNameOrId(opts.id);
+		if (existing) {
+			const updated = await updateWorkflowRecord(opts.id, {
+				code,
+				description: opts.description,
+				webhookTrigger: opts.trigger,
+			});
+			console.log(`[workflow] Updated webhook workflow "${opts.id}"`);
+			return updated;
+		}
+		const stored = await storeWorkflow({
+			type: 'workflow',
+			workflowId: opts.id,
+			code,
+			description: opts.description,
+			webhookTrigger: opts.trigger,
+		});
+		console.log(`[workflow] Registered webhook workflow "${opts.id}"`);
+		return stored;
+	},
+
+	/**
+	 * Register or update a cron-triggered workflow.
+	 * The handler is serialized and stored in the DB. `corsair` is available as a global.
+	 * Note: the cron scheduler in the running server picks up new workflows on restart.
+	 */
+	async cron(opts: {
+		id: string;
+		description?: string;
+		schedule: string;
+		handler: () => Promise<void>;
+	}) {
+		const code = serializeCronHandler(opts.id, opts.handler);
+		const existing = await findWorkflowByNameOrId(opts.id);
+		if (existing) {
+			const updated = await updateWorkflowRecord(opts.id, {
+				code,
+				description: opts.description,
+				cronSchedule: opts.schedule,
+			});
+			console.log(`[workflow] Updated cron workflow "${opts.id}" (${opts.schedule})`);
+			return updated;
+		}
+		const stored = await storeWorkflow({
+			type: 'workflow',
+			workflowId: opts.id,
+			code,
+			description: opts.description,
+			cronSchedule: opts.schedule,
+		});
+		if (stored) {
+			registerCronWorkflow(stored.id, opts.id, code, opts.schedule);
+		}
+		console.log(`[workflow] Registered cron workflow "${opts.id}" (${opts.schedule})`);
+		return stored;
+	},
+
+	/** List workflows. Optionally filter by type. */
+	list(triggerType?: 'cron' | 'webhook' | 'manual' | 'all') {
+		return listWorkflows(triggerType);
+	},
+
+	/** Archive (soft-delete) a workflow by name or ID. */
+	delete(id: string) {
+		return archiveWorkflow(id);
+	},
+};
