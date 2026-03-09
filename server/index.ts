@@ -3,6 +3,7 @@ import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import { processWebhook } from 'corsair';
 import { asc, eq } from 'drizzle-orm';
 import express from 'express';
+import { corsairPermissions, type PermissionLike } from '@corsair/ui';
 import type { SimpleMessage } from './agent';
 import { runAgent, WORKFLOW_FAILURE_PROMPT } from './agent';
 import { createBaseMcpServer, createMcpRouter } from '@corsair/mcp';
@@ -400,161 +401,34 @@ async function main() {
 			return;
 		}
 
-		const FIELD_LABELS: Record<string, Record<string, string>> = {
-			'messages.post': {
-				channel: 'Channel',
-				text: 'Message',
-				thread_ts: 'Thread',
-				reply_broadcast: 'Also send to channel',
-			},
-			'emails.send': {
-				to: 'To',
-				from: 'From',
-				subject: 'Subject',
-				html: 'Body',
-				text: 'Body',
-				cc: 'CC',
-				bcc: 'BCC',
-			},
-			'issues.create': {
-				title: 'Title',
-				description: 'Description',
-				teamId: 'Team',
-				assigneeId: 'Assignee',
-				priority: 'Priority',
-				stateId: 'Status',
-			},
-		};
-		const PLUGIN_COLORS: Record<string, string> = {
-			slack: '#4a154b',
-			linear: '#5e6ad2',
-			discord: '#5865f2',
-			github: '#333',
-			resend: '#000',
-			gmail: '#ea4335',
+		const permissionLike: PermissionLike = {
+			id: perm.id,
+			plugin: perm.plugin,
+			endpoint: perm.operation ?? perm.endpoint,
+			operation: perm.operation,
+			description: perm.description,
+			status: perm.status as PermissionLike['status'],
+			args:
+				perm.args && typeof perm.args === 'object'
+					? (perm.args as Record<string, unknown>)
+					: {},
+			createdAt: perm.createdAt,
 		};
 
-		function esc(s: unknown) {
-			return String(s ?? '')
-				.replace(/&/g, '&amp;')
-				.replace(/</g, '&lt;')
-				.replace(/>/g, '&gt;');
-		}
-		function getLabel(op: string, key: string) {
-			return FIELD_LABELS[op]?.[key] ?? key;
-		}
-		function renderArgVal(val: unknown): string {
-			if (val === null || val === undefined)
-				return `<span style="color:#666">—</span>`;
-			if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-			if (typeof val === 'string') {
-				if (val.length > 120 || val.includes('\n'))
-					return `<pre style="margin:0;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.5">${esc(val)}</pre>`;
-				return esc(val);
-			}
-			if (Array.isArray(val)) return esc(val.join(', '));
-			return `<pre style="margin:0;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.4">${esc(JSON.stringify(val, null, 2))}</pre>`;
-		}
-
-		const isPending = perm.status === 'pending';
-		const statusColor =
-			perm.status === 'granted' || perm.status === 'completed'
-				? '#22c55e'
-				: perm.status === 'declined'
-					? '#ef4444'
-					: '#f59e0b';
-		const badgeBg = PLUGIN_COLORS[perm.plugin] ?? '#141414';
-		const args =
-			perm.args && typeof perm.args === 'object'
-				? (perm.args as Record<string, unknown>)
-				: {};
-		const argEntries = Object.entries(args);
-		const ts = new Date(perm.createdAt).toLocaleString('en-US', {
-			dateStyle: 'medium',
-			timeStyle: 'short',
+		const onApproval = () => ({
+			method: 'POST' as const,
+			url: `/api/permissions/${id}/resolve`,
 		});
 
-		let statusBar = '';
-		if (!isPending) {
-			const bg =
-				perm.status === 'granted' || perm.status === 'completed'
-					? '#14532d'
-					: '#7f1d1d';
-			statusBar = `<div style="padding:10px 14px;border-radius:6px;background:${bg};color:${statusColor};font-size:13px;font-weight:600;margin-bottom:16px;text-align:center">This permission has been ${esc(perm.status)}.</div>`;
-		}
+		const onDenial = () => ({
+			method: 'POST' as const,
+			url: `/api/permissions/${id}/resolve`,
+		});
 
-		let argsHtml = '';
-		if (argEntries.length > 0) {
-			const rows = argEntries
-				.map(
-					([k, v]) =>
-						`<div style="margin-bottom:14px"><div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">${esc(getLabel(perm.operation, k))}</div><div style="font-size:14px;color:#e8e8e8">${renderArgVal(v)}</div></div>`,
-				)
-				.join('');
-			argsHtml = `<div style="background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:16px;margin-bottom:24px"><div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;font-weight:600">Request details</div>${rows}</div>`;
-		}
-
-		const actions = isPending
-			? `<form id="form" style="display:flex;gap:10px;justify-content:flex-end">
-					<button type="button" onclick="resolve('decline')" style="cursor:pointer;border:1px solid #2a2a2a;background:#141414;color:#e8e8e8;border-radius:6px;padding:10px 24px;font-size:14px;font-weight:600">Decline</button>
-					<button type="button" onclick="resolve('approve')" style="cursor:pointer;border:none;background:#22c55e;color:#fff;border-radius:6px;padding:10px 24px;font-size:14px;font-weight:600">Approve</button>
-				</form>
-				<div id="msg" style="display:none;text-align:center;margin-top:12px;font-size:13px;color:#666"></div>
-				<script>
-					function resolve(action) {
-						document.querySelectorAll('button').forEach(b => b.disabled = true);
-						fetch('/api/permissions/${id}/resolve', {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ action }),
-						})
-						.then(r => r.json())
-						.then(d => {
-							document.getElementById('form').style.display = 'none';
-							const msg = document.getElementById('msg');
-							msg.style.display = 'block';
-							msg.style.color = action === 'approve' ? '#22c55e' : '#ef4444';
-							msg.textContent = d.message || (action === 'approve' ? 'Approved.' : 'Declined.');
-						})
-						.catch(() => {
-							document.getElementById('msg').style.display = 'block';
-							document.getElementById('msg').textContent = 'Something went wrong.';
-						});
-					}
-				<\/script>`
-			: '';
+		const html = corsairPermissions(permissionLike, onApproval, onDenial);
 
 		res.setHeader('Content-Type', 'text/html');
-		res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Permission Request</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0a0a0a; color: #e8e8e8; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 24px; }
-    .card { width: 100%; max-width: 520px; background: #141414; border: 1px solid #2a2a2a; border-radius: 12px; padding: 28px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-      <span style="font-size:22px">&#x1f512;</span>
-      <h1 style="font-size:18px;font-weight:700">Permission Request</h1>
-    </div>
-    ${statusBar}
-    <p style="font-size:15px;line-height:1.6;margin-bottom:20px">${esc(perm.description)}</p>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
-      <span style="display:inline-flex;align-items:center;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600;background:${badgeBg};color:#fff;text-transform:capitalize">${esc(perm.plugin)}</span>
-      <code style="font-size:12px;color:#666;background:#111;padding:2px 8px;border-radius:6px">${esc(perm.endpoint)}</code>
-    </div>
-    ${argsHtml}
-    <p style="font-size:11px;color:#666;margin-bottom:20px">Requested ${esc(ts)}</p>
-    ${actions}
-  </div>
-</body>
-</html>`);
+		res.send(html);
 	});
 
 	app.get('/api/permissions/:id', async (req, res) => {
