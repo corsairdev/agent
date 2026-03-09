@@ -226,7 +226,7 @@ async function main() {
 		res: import('express').Response,
 	) {
 		try {
-			const pluginKeys = (corsair as unknown as Record<string, { keys: { get_integration_credentials: () => Promise<{ client_id?: string; redirect_url?: string; client_secret?: string }>; set_access_token: (t: string) => Promise<void>; set_refresh_token: (t: string) => Promise<void> } }>)[plugin].keys;
+			const pluginKeys = corsair[plugin].keys;
 			const creds = await pluginKeys.get_integration_credentials();
 			if (!creds.client_id || !creds.redirect_url) {
 				res.status(400).send(`${plugin} not configured. Run the setup script first.`);
@@ -269,7 +269,7 @@ async function main() {
 		const { label } = GOOGLE_PLUGIN_CONFIG[plugin];
 
 		try {
-			const pluginKeys = (corsair as unknown as Record<string, { keys: { get_integration_credentials: () => Promise<{ client_id?: string; redirect_url?: string; client_secret?: string }>; set_access_token: (t: string) => Promise<void>; set_refresh_token: (t: string) => Promise<void> } }>)[plugin].keys;
+			const pluginKeys = corsair[plugin].keys;
 			const creds = await pluginKeys.get_integration_credentials();
 			if (!creds.client_id || !creds.client_secret || !creds.redirect_url) {
 				res.status(400).send('Missing integration credentials.');
@@ -407,7 +407,7 @@ async function main() {
 			endpoint: perm.operation ?? perm.endpoint,
 			operation: perm.operation,
 			description: perm.description,
-			status: perm.status as PermissionLike['status'],
+			status: perm.status,
 			args:
 				perm.args && typeof perm.args === 'object'
 					? (perm.args as Record<string, unknown>)

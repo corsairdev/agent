@@ -266,7 +266,7 @@ export async function buildMcpServer(context?: {
 			sendMessageTool,
 			askHumanTool,
 			getConversationHistoryTool,
-		] as Parameters<typeof createSdkMcpServer>[0]['tools'],
+		],
 	});
 }
 
