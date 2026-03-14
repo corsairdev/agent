@@ -1,18 +1,31 @@
 import 'dotenv/config';
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import { getCorsairMcp } from '../server/sdk';
+import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
+import { ClaudeProvider } from '@corsair-dev/mcp';
+import { corsair } from '../server/corsair';
 
-const mcp = getCorsairMcp();
+// Initialize Corsair MCP tools
+const provider = new ClaudeProvider();
+const tools = await provider.build({ corsair });
 
-for await (const event of query({
-	prompt: 'list all slack channels, send test message to #sdk-test channel',
+// Create in-process MCP server
+const server = createSdkMcpServer({ name: 'corsair', tools });
+
+// Query Claude with MCP tools
+const stream = query({
+	prompt: 'list all slack channels, send test message to sdk-test channel',
 	options: {
-		model: 'claude-sonnet-4-6',
+		model: 'claude-opus-4-6',
 		permissionMode: 'bypassPermissions',
-		mcpServers: { corsair: mcp },
+		allowDangerouslySkipPermissions: true,
+		mcpServers: {
+			corsair: server,
+		},
 	},
-})) {
-	if (event.type === 'result' && event.subtype === 'success') {
+});
+
+// Stream the response
+for await (const event of stream) {
+	if ('result' in event) {
 		process.stdout.write(event.result);
 	}
 }
