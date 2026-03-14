@@ -3,19 +3,16 @@ import {
 	query,
 	tool,
 } from '@anthropic-ai/claude-agent-sdk';
+import { createClaudeTools } from '@corsair/mcp';
 import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, permissions, whatsappMessages } from './db';
+import { db, whatsappMessages } from './db';
 import {
-	archiveWorkflow,
-	listWorkflows,
-	storeWorkflow,
-	updateWorkflowRecord,
-} from './executor';
-import {
-	registerCronWorkflow,
-	unregisterCronWorkflow,
-} from './workflow-scheduler';
+	cronAdapter,
+	permissionAdapter,
+	workflowAdapter,
+} from './mcp-adapters';
+import { corsair } from './corsair';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -164,11 +161,23 @@ function buildSystemPromptWithHistory(
 // In-process MCP server
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function buildMcpServer(context?: {
+export async function buildMcpServer(context?: {
 	jid?: string;
 	onMessage?: (text: string) => Promise<void>;
 	onAskHuman?: (question: string) => void;
 }) {
+	const basePermissionUrl =
+		process.env.BASE_PERMISSION_URL ??
+		process.env.BASE_URL ??
+		`http://localhost:${process.env.PORT ?? 3000}`;
+	const corsairTools = await createClaudeTools({
+		corsair,
+		workflows: workflowAdapter,
+		cron: cronAdapter,
+		permissions: permissionAdapter,
+		basePermissionUrl,
+		context,
+	});
 	const sendMessageTool = tool(
 		'send_message',
 		'Send a message to the user without pausing. Use for acknowledgments ("On it!"), progress updates, and final answers. You can call it multiple times.',
@@ -194,228 +203,6 @@ export function buildMcpServer(context?: {
 			// this is the reliable interception point.
 			context?.onAskHuman?.(question);
 			return { content: [{ type: 'text', text: '(waiting for response)' }] };
-		},
-	);
-
-	const requestPermissionTool = tool(
-		'request_permission',
-		'Request permission from the user to execute a protected endpoint. Call this when a script returns a [PERMISSION_REQUIRED] message. Returns an approval URL. After calling this, call ask_human with the approval URL so the user can review and approve.',
-		{
-			endpoint: z
-				.string()
-				.describe(
-					'Full endpoint path from the PERMISSION_REQUIRED message, e.g. "slack.messages.post"',
-				),
-			args: z
-				.record(z.unknown())
-				.describe('The arguments object from the PERMISSION_REQUIRED message'),
-			description: z
-				.string()
-				.describe(
-					'Short human-readable summary of what this action will do, e.g. "Post a message to #general in Slack"',
-				),
-		},
-		async ({ endpoint, args, description }) => {
-			const [plugin, ...rest] = endpoint.split('.');
-			const operation = rest.join('.');
-
-			const [perm] = await db
-				.insert(permissions)
-				.values({
-					endpoint,
-					plugin: plugin!,
-					operation,
-					args,
-					description,
-					status: 'pending',
-					jid: context?.jid,
-				})
-				.returning({ id: permissions.id });
-
-			const baseUrl = process.env.BASE_PERMISSION_URL;
-			const approvalUrl = `${baseUrl}/permissions/${perm!.id}`;
-
-			const result = {
-				permissionId: perm!.id,
-				approvalUrl,
-				message: `Permission request created. Ask the user to approve at: ${approvalUrl}`,
-			};
-			return {
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-			};
-		},
-	);
-
-	const manageWorkflowsTool = tool(
-		'manage_workflows',
-		'List (optional triggerType filter), create (store a new workflow), update (workflowId + fields), or archive (workflowId) workflows.',
-		{
-			action: z
-				.enum(['list', 'create', 'update', 'delete'])
-				.describe('The action to perform'),
-			triggerType: z
-				.enum(['cron', 'webhook', 'manual', 'all'])
-				.optional()
-				.describe('Filter workflows by trigger type (for list)'),
-			workflowId: z
-				.string()
-				.optional()
-				.describe('Workflow ID (function name) for create/update/delete'),
-			code: z.string().optional().describe('Workflow code for create/update'),
-			description: z.string().optional().describe('Human-readable description'),
-			cronSchedule: z
-				.string()
-				.optional()
-				.describe('Cron schedule for create/update'),
-			webhookTrigger: z
-				.object({ plugin: z.string(), action: z.string() })
-				.optional()
-				.describe('Webhook trigger for create/update'),
-			status: z
-				.enum(['active', 'paused', 'archived'])
-				.optional()
-				.describe('Workflow status for update'),
-		},
-		async ({
-			action,
-			triggerType,
-			workflowId,
-			code,
-			description,
-			cronSchedule,
-			webhookTrigger,
-			status,
-		}) => {
-			console.log(
-				`[manage_workflows] action=${action} workflowId=${workflowId ?? 'N/A'} cronSchedule=${cronSchedule ?? 'N/A'} codeLen=${code?.length ?? 0}`,
-			);
-			let result: unknown;
-
-			if (action === 'list') {
-				result = { workflows: await listWorkflows(triggerType) };
-			} else if (action === 'create') {
-				if (!workflowId || !code) {
-					result = {
-						success: false,
-						error: 'workflowId and code are required for create',
-					};
-				} else {
-					const stored = await storeWorkflow({
-						type: 'workflow',
-						workflowId,
-						code,
-						description: description?.trim() || undefined,
-						cronSchedule: cronSchedule?.trim() || undefined,
-						webhookTrigger,
-						notifyJid: context?.jid,
-					});
-					console.log(
-						`[manage_workflows] storeWorkflow → id=${stored?.id} name=${stored?.name} triggerType=${stored?.triggerType}`,
-					);
-					// Register with the cron scheduler immediately if it's a cron workflow
-					if (stored && cronSchedule?.trim()) {
-						const ok = registerCronWorkflow(
-							stored.id,
-							workflowId,
-							code,
-							cronSchedule.trim(),
-							context?.jid,
-						);
-						console.log(`[manage_workflows] registerCronWorkflow → ok=${ok}`);
-						if (!ok) {
-							result = {
-								success: false,
-								error: `Invalid cron expression: "${cronSchedule}"`,
-							};
-							return {
-								content: [
-									{ type: 'text' as const, text: JSON.stringify(result) },
-								],
-							};
-						}
-					}
-					result = {
-						success: true,
-						workflow: {
-							id: stored!.id,
-							name: stored!.name,
-							triggerType: stored!.triggerType,
-							status: stored!.status,
-						},
-					};
-				}
-			} else if (action === 'delete') {
-				if (!workflowId) {
-					result = {
-						success: false,
-						error: 'workflowId is required for delete',
-					};
-				} else {
-					const archived = await archiveWorkflow(workflowId);
-					if (!archived) {
-						result = {
-							success: false,
-							error: `Workflow "${workflowId}" not found`,
-						};
-					} else {
-						unregisterCronWorkflow(archived.id);
-						result = {
-							success: true,
-							message: `Workflow "${archived.name}" archived`,
-						};
-					}
-				}
-			} else {
-				// action === 'update'
-				if (!workflowId) {
-					result = {
-						success: false,
-						error: 'workflowId is required for update',
-					};
-				} else {
-					const updated = await updateWorkflowRecord(workflowId, {
-						code,
-						description,
-						cronSchedule,
-						webhookTrigger,
-						status,
-					});
-					if (!updated) {
-						result = {
-							success: false,
-							error: `Workflow "${workflowId}" not found`,
-						};
-					} else {
-						// Sync the in-memory scheduler with the new DB state
-						if (updated.status === 'archived' || updated.status === 'paused') {
-							unregisterCronWorkflow(updated.id);
-						} else if (updated.triggerType === 'cron') {
-							const cfg = updated.triggerConfig as { cron?: string };
-							if (cfg.cron) {
-								registerCronWorkflow(
-									updated.id,
-									updated.name,
-									updated.code,
-									cfg.cron,
-								);
-							}
-						}
-						result = {
-							success: true,
-							workflow: {
-								id: updated.id,
-								name: updated.name,
-								triggerType: updated.triggerType,
-								status: updated.status,
-							},
-						};
-					}
-				}
-			}
-
-			return {
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-			};
 		},
 	);
 
@@ -475,10 +262,9 @@ export function buildMcpServer(context?: {
 		name: 'corsair',
 		version: '1.0.0',
 		tools: [
+			...corsairTools,
 			sendMessageTool,
 			askHumanTool,
-			requestPermissionTool,
-			manageWorkflowsTool,
 			getConversationHistoryTool,
 		],
 	});
@@ -510,12 +296,11 @@ export async function runAgent(
 	);
 	const abortController = new AbortController();
 	let askHumanQuestion: string | null = null;
-	const mcpServer = buildMcpServer({
+	const mcpServer = await buildMcpServer({
 		jid: opts.jid,
 		onMessage,
 		onAskHuman: (question) => {
 			askHumanQuestion = question;
-			// Defer abort so the tool handler returns cleanly before the SDK is stopped
 			process.nextTick(() => abortController.abort());
 		},
 	});
@@ -602,13 +387,12 @@ export async function* createAgentStream(
 	const systemPrompt = buildSystemPromptWithHistory(opts.history);
 	const abortController = new AbortController();
 	let askHumanQuestion: string | null = null;
-	const mcpServer = buildMcpServer({
+	const mcpServer = await buildMcpServer({
 		onAskHuman: (question) => {
 			askHumanQuestion = question;
 			process.nextTick(() => abortController.abort());
 		},
 	});
-	// Map from toolCallId → toolName so we can emit tool-result with name
 	const pendingToolCalls = new Map<string, string>();
 
 	try {
@@ -658,14 +442,14 @@ export async function* createAgentStream(
 							typeof block === 'object' &&
 							block !== null &&
 							'type' in block &&
-							(block satisfies { type: string }).type === 'tool_result'
+							block.type === 'tool_result' &&
+							'tool_use_id' in block
 						) {
-							const toolResult = block satisfies { tool_use_id: string };
 							const toolName =
-								pendingToolCalls.get(toolResult.tool_use_id) ?? 'unknown';
+								pendingToolCalls.get(block.tool_use_id) ?? 'unknown';
 							yield {
 								type: 'tool-result',
-								toolCallId: toolResult.tool_use_id,
+								toolCallId: block.tool_use_id,
 								toolName,
 							};
 						}
