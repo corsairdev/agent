@@ -9,7 +9,7 @@ const main = async () => {
 
 	// console.log(res);
 
-	const mcpServer = buildMcpServer({});
+	const mcpServer = await buildMcpServer({});
 
 	for await (const message of query({
 		prompt: 'say hi to the user',
